@@ -66,30 +66,6 @@ inside a *different* running world - see below).
   client (the only way to make outbound HTTP calls from BDS-side
   scripts).
 
-### Status
-
-IaC and application code only - **nothing here has been deployed**.
-`cdk synth` and both Gradle/npm builds are verified to succeed; see the
-commit history for what was actually checked (built jar contents, the
-synthesized IAM policy, clean-install builds, etc.) versus what's
-still an assumption to confirm at deploy time.
-
-Known rough edges, called out in code comments where they matter:
-
-- `@minecraft/server-net` and `@minecraft/server-admin` are both
-  pre-release Bedrock modules. The manifest dependency version string
-  convention and the exact server-side `variables` config file/flag
-  that `worldControl.ts` reads `worldControlApiUrl` from are both worth
-  reconfirming against current Bedrock docs before relying on them.
-- The WaterdogPE Fargate task has no load balancer, so its public IP
-  changes if the task is ever replaced. There's no Elastic IP/Route53
-  update wired up for that yet.
-- BDS defaulting to the NetherNet transport (which WaterdogPE's RakNet
-  downstream connection can't reach) is handled by passing
-  `TRANSPORT=raknet` as a RunTask container override - itzg's image
-  maps that into `server.properties` correctly as of
-  [itzg/docker-minecraft-bedrock-server#675](https://github.com/itzg/docker-minecraft-bedrock-server/pull/675).
-
 ### Building
 
 ```bash
@@ -104,14 +80,6 @@ cd infra && npm install && npx cdk synth
 # hakomc dev environment + WorldControl operations library (repo root)
 npm install && npm run build
 ```
-
-### License
-
-The hakomc dev environment/library at the repo root carries the GPLv3
-license (see [`LICENSE`](LICENSE)) inherited from the
-[hakomc-server](https://github.com/hakomc/hakomc-server) template it
-was bootstrapped from. `waterdog/` and `infra/` don't have a license
-chosen yet.
 
 ---
 
@@ -147,16 +115,6 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 - **`infra/`** — AWS CDK(TypeScript)スタック。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
 - **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップし、サブディレクトリではなくルートに置いている(npmのgit依存はリポジトリのサブディレクトリを指定する方法が無く、`npm install git+https://...`で直接インストールできるようにするため)。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。
 
-### 現状
-
-IaCとアプリケーションコードのみ — **ここには何もデプロイされていない**。`cdk synth`とGradle/npm両方のビルドが成功することは確認済み。実際に何を確認したか(生成されたjarの中身、synthesizeされたIAMポリシー、クリーンインストールでのビルド等)と、デプロイ時にまだ確認が必要な仮定の部分は、コミット履歴を参照。
-
-コードコメントに残している、既知の粗い部分:
-
-- `@minecraft/server-net`と`@minecraft/server-admin`はどちらもプレリリース版のBedrockモジュール。manifestの依存バージョン文字列の慣習や、`worldControl.ts`が`worldControlApiUrl`を読み取っているサーバー側の`variables`設定ファイル/フラグの正確な仕様は、実デプロイ前に最新のBedrockドキュメントで再確認する価値がある。
-- WaterdogPEのFargateタスクにロードバランサが無いため、タスクが置き換わるとパブリックIPが変わる。Elastic IPやRoute53の自動更新は未整備。
-- BDSがデフォルトでNetherNetトランスポートになる問題(WaterdogPEのRakNetダウンストリーム接続が届かない)は、RunTaskのコンテナオーバーライドで`TRANSPORT=raknet`を渡すことで対処している。itzgのイメージは[itzg/docker-minecraft-bedrock-server#675](https://github.com/itzg/docker-minecraft-bedrock-server/pull/675)以降、これを正しく`server.properties`にマッピングしてくれる。
-
 ### ビルド
 
 ```bash
@@ -171,7 +129,3 @@ cd infra && npm install && npx cdk synth
 # hakomc開発環境 + WorldControl操作ライブラリ (リポジトリルート)
 npm install && npm run build
 ```
-
-### ライセンス
-
-リポジトリルートのhakomc開発環境/ライブラリは、ブートストラップ元の[hakomc-server](https://github.com/hakomc/hakomc-server)テンプレートから継承した[`LICENSE`](LICENSE)(GPLv3)を持つ。`waterdog/`と`infra/`のライセンスはまだ未決定。
