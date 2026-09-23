@@ -130,9 +130,10 @@ npx cdk bootstrap
 npx cdk deploy --all
 ```
 
-`cdk deploy` prints `ClusterName` and `ServiceName` outputs. Use them
-to find the Waterdog task's current public IP (see [Architecture](#architecture)
-for why there's no fixed one):
+`cdk deploy` prints `ClusterName` and `ServiceName` outputs. There's no
+load balancer, so the Waterdog task's public IP isn't fixed - it's
+reassigned if the task is ever replaced - use the outputs to look up
+the current one:
 
 ```bash
 TASK_ARN=$(aws ecs list-tasks --cluster <ClusterName> --service-name <ServiceName> --query 'taskArns[0]' --output text)
@@ -239,7 +240,7 @@ npx cdk bootstrap
 npx cdk deploy --all
 ```
 
-`cdk deploy`は`ClusterName`と`ServiceName`という出力を表示する。これを使ってWaterdogタスクの現在のパブリックIPを調べられる(固定IPが無い理由は[アーキテクチャ](#アーキテクチャ)参照):
+`cdk deploy`は`ClusterName`と`ServiceName`という出力を表示する。ロードバランサが無いため、Waterdogタスクのパブリックipは固定ではなく、タスクが置き換わるたびに変わる — この出力を使って現在のIPを調べられる:
 
 ```bash
 TASK_ARN=$(aws ecs list-tasks --cluster <ClusterName> --service-name <ServiceName> --query 'taskArns[0]' --output text)
