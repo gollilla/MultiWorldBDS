@@ -1,5 +1,5 @@
 {
-  "name": "waterdog-worldcontrol",
+  "name": "hakomc-world",
   "version": "1.0.0",
   "description": "hakomc dev server + scripts that call the WaterdogPE WorldControl API to add/remove worlds",
   "type": "module",

@@ -81,10 +81,10 @@ curl -X DELETE http://<waterdog-ip>:8081/worlds/survival2
 ```
 
 **From a BDS-side script**, using this repo's `worldControl.ts`
-(bundled as the `waterdog-worldcontrol` package):
+(bundled as the `hakomc-world` package):
 
 ```ts
-import { addWorld, removeWorld, listWorlds } from 'waterdog-worldcontrol';
+import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
 
 await addWorld('survival2', 'survival');
 console.log(await listWorlds());
@@ -157,10 +157,10 @@ curl http://<waterdogのIP>:8081/worlds
 curl -X DELETE http://<waterdogのIP>:8081/worlds/survival2
 ```
 
-**BDS側のスクリプトから**、このリポジトリの`worldControl.ts`(`waterdog-worldcontrol`パッケージとしてバンドルされている)を使う場合:
+**BDS側のスクリプトから**、このリポジトリの`worldControl.ts`(`hakomc-world`パッケージとしてバンドルされている)を使う場合:
 
 ```ts
-import { addWorld, removeWorld, listWorlds } from 'waterdog-worldcontrol';
+import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
 
 await addWorld('survival2', 'survival');
 console.log(await listWorlds());

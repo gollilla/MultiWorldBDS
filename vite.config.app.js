@@ -8,7 +8,7 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [
     hakomcPlugin({
-      name: "waterdog-worldcontrol",
+      name: "hakomc-world",
       uuid: "96b87190-aaf6-42ca-80c3-da04e47ce1e7",
       // Manifest dependency version strings for beta modules conventionally use
       // "1.0.0-beta" rather than the exact npm build hash - worth reconfirming
