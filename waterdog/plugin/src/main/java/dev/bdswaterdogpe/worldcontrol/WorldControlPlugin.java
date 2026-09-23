@@ -24,20 +24,27 @@ import java.util.stream.Collectors;
  * registers it with WaterdogPE; DELETE does the reverse.
  *
  * This has no authentication of its own, so it must never be reachable
- * from the BDS worlds' security group or the public internet. The
- * Waterdog task's security group should only allow inbound :8081 from a
- * dedicated "control" security group (see infra/), not from 0.0.0.0/0 or
- * the BDS tasks' security group.
+ * from the BDS worlds' network/security group or the public internet -
+ * only from a dedicated "control" scope (a security group on ECS, see
+ * infra/; a separate Docker network on Compose, see docker/).
+ *
+ * Backed by either EcsWorldProvisioner or DockerWorldProvisioner,
+ * selected by the PROVISIONER env var ("ecs", the default, or "docker").
  */
 public class WorldControlPlugin extends Plugin {
 
     private HttpServer httpServer;
-    private EcsWorldProvisioner provisioner;
+    private WorldProvisioner provisioner;
 
     @Override
     public void onEnable() {
+        String provisionerName = System.getenv().getOrDefault("PROVISIONER", "ecs");
         try {
-            this.provisioner = new EcsWorldProvisioner(this.getLogger());
+            this.provisioner = switch (provisionerName) {
+                case "docker" -> new DockerWorldProvisioner(this.getLogger());
+                case "ecs" -> new EcsWorldProvisioner(this.getLogger());
+                default -> throw new IllegalStateException("Unknown PROVISIONER: " + provisionerName);
+            };
         } catch (IllegalStateException e) {
             this.getLogger().error("WorldControl misconfigured, not starting HTTP API", e);
             return;

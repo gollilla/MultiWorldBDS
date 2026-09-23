@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Worlds are not backed by an ECS Service since each is provisioned/torn down
  * on demand rather than kept at a fixed desired count.
  */
-public class EcsWorldProvisioner {
+public class EcsWorldProvisioner implements WorldProvisioner {
 
     private static final Duration HEALTHY_TIMEOUT = Duration.ofMinutes(3);
 
@@ -57,6 +57,7 @@ public class EcsWorldProvisioner {
      * Starts a new BDS task for the given world and blocks until it is
      * reachable, returning the address WaterdogPE should dial.
      */
+    @Override
     public InetSocketAddress startWorld(String name, String gamemode) throws InterruptedException {
         RunTaskResponse runResponse = this.ecs.runTask(RunTaskRequest.builder()
                 .cluster(this.clusterArn)
@@ -99,6 +100,7 @@ public class EcsWorldProvisioner {
         return new InetSocketAddress(privateIp, 19132);
     }
 
+    @Override
     public void stopWorld(String name) {
         String taskArn = this.worldNameToTaskArn.remove(name);
         if (taskArn == null) {
