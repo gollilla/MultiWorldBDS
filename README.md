@@ -56,15 +56,11 @@ inside a *different* running world - see below).
 - **the repo root** (`package.json`, `src/`, `worlds/`, ...) - a
   [hakomc](https://github.com/hakomc/hakomc) dev environment (Bedrock
   Scripting API), bootstrapped from
-  [hakomc-server](https://github.com/hakomc/hakomc-server) and kept at
-  the repo root (rather than nested in a subdirectory) so it can be
-  installed directly via a plain `npm install git+https://...` -
-  npm's git dependency support has no way to point at a subdirectory
-  of a repo. `src/worldControl.ts` is a small client for the
-  WorldControl API so a behavior pack running on *one* world can add
-  or remove *other* worlds, using `@minecraft/server-net`'s HTTP
-  client (the only way to make outbound HTTP calls from BDS-side
-  scripts).
+  [hakomc-server](https://github.com/hakomc/hakomc-server).
+  `src/worldControl.ts` is a small client for the WorldControl API so
+  a behavior pack running on *one* world can add or remove *other*
+  worlds, using `@minecraft/server-net`'s HTTP client (the only way to
+  make outbound HTTP calls from BDS-side scripts).
 
 ### Usage
 
@@ -81,7 +77,12 @@ curl -X DELETE http://<waterdog-ip>:8081/worlds/survival2
 ```
 
 **From a BDS-side script**, using this repo's `worldControl.ts`
-(bundled as the `hakomc-world` package):
+(bundled as the `hakomc-world` package). Install it straight from this
+repo:
+
+```bash
+npm install git+https://github.com/gollilla/MultiWorldBDS.git
+```
 
 ```ts
 import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
@@ -157,7 +158,11 @@ curl http://<waterdogのIP>:8081/worlds
 curl -X DELETE http://<waterdogのIP>:8081/worlds/survival2
 ```
 
-**BDS側のスクリプトから**、このリポジトリの`worldControl.ts`(`hakomc-world`パッケージとしてバンドルされている)を使う場合:
+**BDS側のスクリプトから**、このリポジトリの`worldControl.ts`(`hakomc-world`パッケージとしてバンドルされている)を使う場合。このリポジトリから直接インストールできる:
+
+```bash
+npm install git+https://github.com/gollilla/MultiWorldBDS.git
+```
 
 ```ts
 import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
