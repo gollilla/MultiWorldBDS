@@ -59,6 +59,50 @@ public class WorldControlPlugin extends Plugin {
         } catch (IOException e) {
             this.getLogger().error("Failed to start WorldControl HTTP API", e);
         }
+
+        if (Boolean.parseBoolean(System.getenv().getOrDefault("RECONCILE", "true"))) {
+            this.reconcileKnownWorlds();
+        } else {
+            this.getLogger().info("RECONCILE=false, not restoring previously added worlds");
+        }
+    }
+
+    /**
+     * Re-registers worlds the provisioner persisted from a previous run (see
+     * WorldProvisioner#knownWorlds) - without this, a world added via
+     * POST /worlds would only stay reachable until the next Waterdog
+     * restart. Runs off the startup thread since re-provisioning a world
+     * can block for up to a few minutes (container start + health check).
+     * Set RECONCILE=false to skip this and start with only the worlds in
+     * config.yml, leaving previously added ones stopped until POST /worlds
+     * is called for them again.
+     */
+    private void reconcileKnownWorlds() {
+        Map<String, String> knownWorlds = this.provisioner.knownWorlds();
+        if (knownWorlds.isEmpty()) {
+            return;
+        }
+        Thread reconcileThread = new Thread(
+                () -> knownWorlds.forEach(this::reconcileWorld), "worldcontrol-reconcile");
+        reconcileThread.setDaemon(true);
+        reconcileThread.start();
+    }
+
+    private void reconcileWorld(String name, String gamemode) {
+        try {
+            InetSocketAddress address = this.provisioner.startWorld(name, gamemode);
+            ServerInfo serverInfo = ServerInfoType.RAKNET.getServerInfoFactory()
+                    .createServerInfo(name, address, null);
+            if (this.getProxy().registerServerInfo(serverInfo)) {
+                this.getLogger().info("Reconciled world '" + name + "' at " + address);
+            } else {
+                this.getLogger().warn("Could not reconcile world '" + name + "': already registered");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            this.getLogger().error("Failed to reconcile world '" + name + "'", e);
+        }
     }
 
     @Override

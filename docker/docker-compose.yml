@@ -13,9 +13,17 @@ services:
       # Docker via the mounted socket below). ${PWD} is this host directory
       # (docker/), assuming `docker compose` is run from here.
       DOCKER_DATA_DIR: ${PWD}/data/worlds
+      # Whether to re-register/re-provision worlds added via POST /worlds on
+      # startup. Set to "false" to leave previously added worlds stopped
+      # until POST /worlds is called for them again.
+      RECONCILE: ${RECONCILE:-true}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config.yml:/waterdog/config.yml
+      # DockerWorldProvisioner's own record of worlds added via POST /worlds
+      # (name -> gamemode), read back on startup to re-register and, if the
+      # container is gone, re-provision them - see WorldControlPlugin.
+      - ./data/state:/waterdog/state
     ports:
       - "19132:19132/udp"
       # No authentication of its own - loopback-only, never published beyond

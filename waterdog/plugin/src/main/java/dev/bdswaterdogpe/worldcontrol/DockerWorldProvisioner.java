@@ -4,8 +4,13 @@ import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Runs BDS worlds as local Docker containers (docker run), one per world.
@@ -16,6 +21,13 @@ import java.time.Instant;
 public class DockerWorldProvisioner implements WorldProvisioner {
 
     private static final Duration HEALTHY_TIMEOUT = Duration.ofMinutes(3);
+
+    // This container's own filesystem, not the DOCKER_DATA_DIR host path
+    // (that one is only ever resolved by the host daemon for world
+    // containers' /data - see the docker run call below). Needs its own
+    // volume mount to survive this container being recreated; see
+    // docker/docker-compose.yml.
+    private static final Path STATE_FILE = Path.of("/waterdog/state/worlds.txt");
 
     private final Logger logger;
     private final String network;
@@ -38,22 +50,32 @@ public class DockerWorldProvisioner implements WorldProvisioner {
     @Override
     public InetSocketAddress startWorld(String name, String gamemode) throws InterruptedException {
         String container = "bds-" + name;
-        run("docker", "run", "-d", "--name", container,
-                "--network", this.network,
-                "-v", this.dataDir + "/" + name + ":/data",
-                "-e", "EULA=TRUE",
-                "-e", "SERVER_NAME=" + name,
-                "-e", "LEVEL_NAME=" + name,
-                "-e", "GAMEMODE=" + gamemode,
-                "-e", "ONLINE_MODE=false",
-                "-e", "ALLOW_LIST=false",
-                "-e", "ALLOW_CHEATS=true",
-                // See EcsWorldProvisioner: itzg's image maps TRANSPORT into
-                // server.properties as of PR #675, avoiding BDS defaulting to
-                // NetherNet, which WaterdogPE's RakNet connection can't reach.
-                "-e", "TRANSPORT=raknet",
-                "-e", "SERVER_PORT=19132",
-                "itzg/minecraft-bedrock-server");
+        String status = this.inspectStatus(container);
+        if (status == null) {
+            run("docker", "run", "-d", "--name", container,
+                    "--network", this.network,
+                    // Survives the Docker daemon restarting (e.g. a host reboot)
+                    // on its own, without waiting on this plugin's reconcile.
+                    "--restart", "unless-stopped",
+                    "-v", this.dataDir + "/" + name + ":/data",
+                    "-e", "EULA=TRUE",
+                    "-e", "SERVER_NAME=" + name,
+                    "-e", "LEVEL_NAME=" + name,
+                    "-e", "GAMEMODE=" + gamemode,
+                    "-e", "ONLINE_MODE=false",
+                    "-e", "ALLOW_LIST=false",
+                    "-e", "ALLOW_CHEATS=true",
+                    // See EcsWorldProvisioner: itzg's image maps TRANSPORT into
+                    // server.properties as of PR #675, avoiding BDS defaulting to
+                    // NetherNet, which WaterdogPE's RakNet connection can't reach.
+                    "-e", "TRANSPORT=raknet",
+                    "-e", "SERVER_PORT=19132",
+                    "itzg/minecraft-bedrock-server");
+        } else if (!"running".equals(status)) {
+            run("docker", "start", container);
+        }
+        // else: already running - reused as-is (this branch is what makes
+        // reconcile-on-startup idempotent instead of provisioning a duplicate).
 
         this.waitUntilHealthy(container);
         String ip = run("docker", "inspect", "--format",
@@ -61,6 +83,7 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         if (ip.isEmpty()) {
             throw new IllegalStateException("Container " + container + " has no IP on network " + this.network);
         }
+        this.persist(name, gamemode);
         return new InetSocketAddress(ip, 19132);
     }
 
@@ -70,6 +93,61 @@ public class DockerWorldProvisioner implements WorldProvisioner {
             run("docker", "rm", "-f", "bds-" + name);
         } catch (RuntimeException | InterruptedException e) {
             this.logger.warn("Failed to remove container for world '" + name + "'", e);
+        }
+        this.forget(name);
+    }
+
+    @Override
+    public Map<String, String> knownWorlds() {
+        Map<String, String> worlds = new LinkedHashMap<>();
+        if (!Files.exists(STATE_FILE)) {
+            return worlds;
+        }
+        try {
+            for (String line : Files.readAllLines(STATE_FILE, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                String[] parts = line.split("=", 2);
+                if (parts.length == 2) {
+                    worlds.put(parts[0], parts[1]);
+                }
+            }
+        } catch (IOException e) {
+            this.logger.warn("Failed to read WorldControl state file " + STATE_FILE, e);
+        }
+        return worlds;
+    }
+
+    private void persist(String name, String gamemode) {
+        Map<String, String> worlds = this.knownWorlds();
+        worlds.put(name, gamemode);
+        this.writeState(worlds);
+    }
+
+    private void forget(String name) {
+        Map<String, String> worlds = this.knownWorlds();
+        worlds.remove(name);
+        this.writeState(worlds);
+    }
+
+    private void writeState(Map<String, String> worlds) {
+        try {
+            Files.createDirectories(STATE_FILE.getParent());
+            StringBuilder content = new StringBuilder();
+            worlds.forEach((name, gamemode) -> content.append(name).append('=').append(gamemode).append('\n'));
+            Files.writeString(STATE_FILE, content.toString(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            this.logger.warn("Failed to write WorldControl state file " + STATE_FILE, e);
+        }
+    }
+
+    /** Returns the container's status (e.g. "running", "exited"), or null if it doesn't exist. */
+    private String inspectStatus(String container) throws InterruptedException {
+        try {
+            return run("docker", "inspect", "--format", "{{.State.Status}}", container).trim();
+        } catch (IllegalStateException e) {
+            return null;
         }
     }
 
