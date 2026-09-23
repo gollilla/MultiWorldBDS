@@ -2,9 +2,11 @@
  * Example: expose addWorld/removeWorld/listWorlds as in-game slash commands,
  * so you can drive WorldControl straight from ScriptAPI instead of curl.
  *
- * Imported for its side effect (command registration) by src/index.ts, which
- * is how this actually gets loaded when the dev server starts - see the
- * comment there for the tradeoff that implies for hakomc-world as a library.
+ * Reference code, not wired into any build - hakomc-world's own src/index.ts
+ * stays a plain re-export of worldControl.ts. To actually run this, import it
+ * for its side effect from a behavior pack's script entry (src/index.ts for
+ * this repo's own dev world, or your own project's if you're consuming
+ * hakomc-world as a library).
  *
  * Requires config/default/variables.json (or the itzg image's VARIABLES env
  * var, see docker-compose.yml at the repo root) to set worldControlApiUrl to
