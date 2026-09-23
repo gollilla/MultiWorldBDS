@@ -1,10 +1,11 @@
-import { http, HttpRequest, HttpRequestMethod } from '@minecraft/server-net';
+import { fetch } from 'hakomc';
 import { variables } from '@minecraft/server-admin';
 
 /**
  * Thin client for the WaterdogPE WorldControl HTTP API
  * (waterdog/plugin/src/main/java/dev/bdswaterdogpe/worldcontrol), callable
- * from BDS-side scripts via @minecraft/server-net.
+ * from BDS-side scripts via hakomc's fetch() (a fetch-API-shaped wrapper
+ * around @minecraft/server-net's HttpClient).
  *
  * @minecraft/server-net and @minecraft/server-admin only work on Bedrock
  * Dedicated Server, and both modules are still pre-release - they must be
@@ -37,23 +38,24 @@ function baseUrl(): string {
   return configured.replace(/\/+$/, '');
 }
 
-async function request(method: HttpRequestMethod, path: string, body?: string) {
-  const req = new HttpRequest(`${baseUrl()}${path}`).setMethod(method).setTimeout(30);
-  if (body !== undefined) {
-    req.setBody(body);
-    req.addHeader('Content-Type', 'application/x-www-form-urlencoded');
-  }
-  const response = await http.request(req);
-  if (response.status >= 400) {
-    throw new Error(`WorldControl ${method} ${path} failed: ${response.status} ${response.body}`);
+async function request(method: string, path: string, body?: string) {
+  const response = await fetch(`${baseUrl()}${path}`, {
+    method,
+    timeout: 30,
+    ...(body !== undefined
+      ? { body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      : {}),
+  });
+  if (!response.ok) {
+    throw new Error(`WorldControl ${method} ${path} failed: ${response.status} ${response.text()}`);
   }
   return response;
 }
 
 /** GET /worlds - lists every world currently registered with Waterdog. */
 export async function listWorlds(): Promise<WorldSummary[]> {
-  const response = await request(HttpRequestMethod.GET, '/worlds');
-  return JSON.parse(response.body) as WorldSummary[];
+  const response = await request('GET', '/worlds');
+  return response.json() as WorldSummary[];
 }
 
 /**
@@ -63,7 +65,7 @@ export async function listWorlds(): Promise<WorldSummary[]> {
  */
 export async function addWorld(name: string, gamemode: string = 'survival'): Promise<void> {
   await request(
-    HttpRequestMethod.POST,
+    'POST',
     '/worlds',
     `name=${encodeURIComponent(name)}&gamemode=${encodeURIComponent(gamemode)}`
   );
@@ -71,5 +73,5 @@ export async function addWorld(name: string, gamemode: string = 'survival'): Pro
 
 /** DELETE /worlds/{name} - unregisters and stops the given world's task. */
 export async function removeWorld(name: string): Promise<void> {
-  await request(HttpRequestMethod.DELETE, `/worlds/${encodeURIComponent(name)}`);
+  await request('DELETE', `/worlds/${encodeURIComponent(name)}`);
 }
