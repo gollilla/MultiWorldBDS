@@ -1,5 +1,7 @@
 # BDS-waterdogpe
 
+[日本語](README.ja.md)
+
 A PMMP-style dynamic multi-world setup for vanilla Minecraft Bedrock
 Dedicated Server (BDS), built on [WaterdogPE](https://github.com/WaterdogPE/WaterdogPE)
 and AWS ECS Fargate. Players connect to a single WaterdogPE proxy; worlds
