@@ -14,18 +14,39 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+/**
+ * Exposes GET/POST/DELETE /worlds so a world can be added or removed at
+ * runtime, without restarting the proxy. POST provisions the world's
+ * backend as a standalone ECS Fargate task (see EcsWorldProvisioner) and
+ * registers it with WaterdogPE; DELETE does the reverse.
+ *
+ * This has no authentication of its own, so it must never be reachable
+ * from the BDS worlds' security group or the public internet. The
+ * Waterdog task's security group should only allow inbound :8081 from a
+ * dedicated "control" security group (see infra/), not from 0.0.0.0/0 or
+ * the BDS tasks' security group.
+ */
 public class WorldControlPlugin extends Plugin {
 
     private HttpServer httpServer;
+    private EcsWorldProvisioner provisioner;
 
     @Override
     public void onEnable() {
         try {
+            this.provisioner = new EcsWorldProvisioner(this.getLogger());
+        } catch (IllegalStateException e) {
+            this.getLogger().error("WorldControl misconfigured, not starting HTTP API", e);
+            return;
+        }
+
+        try {
             this.httpServer = HttpServer.create(new InetSocketAddress("0.0.0.0", 8081), 0);
             this.httpServer.createContext("/worlds", this::handleWorlds);
-            this.httpServer.setExecutor(null);
+            this.httpServer.setExecutor(Executors.newCachedThreadPool());
             this.httpServer.start();
             this.getLogger().info("WorldControl HTTP API listening on :8081");
         } catch (IOException e) {
@@ -69,22 +90,39 @@ public class WorldControlPlugin extends Plugin {
     private void addWorld(HttpExchange exchange) throws IOException {
         Map<String, String> form = parseForm(exchange.getRequestBody().readAllBytes());
         String name = form.get("name");
-        String address = form.get("address");
-        if (name == null || name.isBlank() || address == null || !address.contains(":")) {
-            this.respond(exchange, 400, "name and address (host:port) are required");
+        String gamemode = form.getOrDefault("gamemode", "survival");
+        if (name == null || name.isBlank()) {
+            this.respond(exchange, 400, "name is required");
+            return;
+        }
+        if (this.getProxy().getServerInfo(name) != null) {
+            this.respond(exchange, 409, "a world with that name is already registered");
             return;
         }
 
-        String host = address.substring(0, address.lastIndexOf(':'));
-        int port = Integer.parseInt(address.substring(address.lastIndexOf(':') + 1));
-        ServerInfo serverInfo = ServerInfoType.RAKNET.getServerInfoFactory()
-                .createServerInfo(name, new InetSocketAddress(host, port), null);
+        InetSocketAddress address;
+        try {
+            address = this.provisioner.startWorld(name, gamemode);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            this.respond(exchange, 500, "interrupted while provisioning world");
+            return;
+        } catch (RuntimeException e) {
+            this.getLogger().error("Failed to provision world '" + name + "'", e);
+            this.provisioner.stopWorld(name);
+            this.respond(exchange, 502, "failed to provision world: " + e.getMessage());
+            return;
+        }
 
+        ServerInfo serverInfo = ServerInfoType.RAKNET.getServerInfoFactory()
+                .createServerInfo(name, address, null);
         boolean registered = this.getProxy().registerServerInfo(serverInfo);
         if (registered) {
             this.getLogger().info("Registered world '" + name + "' at " + address);
             this.respond(exchange, 200, "registered");
         } else {
+            // Lost a race with another registration of the same name; tear back down.
+            this.provisioner.stopWorld(name);
             this.respond(exchange, 409, "a world with that name is already registered");
         }
     }
@@ -96,6 +134,7 @@ public class WorldControlPlugin extends Plugin {
         }
 
         ServerInfo removed = this.getProxy().removeServerInfo(name);
+        this.provisioner.stopWorld(name);
         if (removed != null) {
             this.getLogger().info("Removed world '" + name + "'");
             this.respond(exchange, 200, "removed");
