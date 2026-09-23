@@ -1,0 +1,16 @@
+# Runtime data (BDS world saves, downloaded binaries, logs)
+data/
+
+# Gradle
+waterdog/plugin/.gradle/
+waterdog/plugin/build/
+
+# Node / CDK
+node_modules/
+infra/cdk.out/
+infra/node_modules/
+hakomc/node_modules/
+hakomc/dist/
+
+# OS
+.DS_Store

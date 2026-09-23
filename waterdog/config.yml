@@ -1,0 +1,263 @@
+# Waterdog Main Configuration file
+# Configure your desired network settings here.
+
+listener:
+
+  # The Motd which will be displayed in the server tab of a player and returned during ping
+  motd: §bWaterdog§3PE Test
+
+  # The secondary MOTD shown in the server list and returned during ping
+  sub_motd: Multi-World Verification
+
+  # The name that is shown up in the player list (pause menu)
+  name: WaterdogPE
+
+  # The server priority list. If not changed by plugins, the proxy will connect the player to the first of those servers
+  priorities:
+  - world1
+  - world2
+
+  # The address to bind the server to
+  host: 0.0.0.0:19132
+
+  # The maximum amount of players that can connect to this proxy instance
+  max_players: 20
+
+  # Map the ip a player joined through to a specific server
+  # for example skywars.xyz.com => SkyWars-1
+  # when a player connects using skywars-xyz.com as the serverIp, he will be connected to SkyWars-1 directly
+  forced_hosts: {}
+
+  # Additional ports to listen to
+  additional_ports: []
+
+  # The join handler used to determine the first entered server. Possible options: DefaultJoinHandler
+  join_handler: DefaultJoinHandler
+
+  # The reconnect handler used to determine fallback connections. Possible options: DefaultReconnectHandler, RoundRobinReconnectHandler
+  reconnect_handler: DefaultReconnectHandler
+
+# A list of all downstream servers that are available right after starting
+# address field is formatted using ip:port
+# publicAddress is optional and can be set to the ip players can directly connect through
+servers:
+  world1:
+    address: bds-world1:19132
+    server_type: raknet
+  world2:
+    address: bds-world2:19132
+    server_type: raknet
+
+# Connection and security related settings. Do NOT edit unless you know what you are doing!
+network_settings:
+
+  # If enabled, the proxy will be able to bind to an Ipv6 Address
+  enable_ipv6: false
+
+  # Maximum MTU size of user <-> proxy connection that is allowed
+  max_user_mtu: 1400
+
+  # Maximum MTU size of proxy <-> server connection that is allowed
+  max_downstream_mtu: 1400
+
+  # Server connection timeout in seconds
+  connection_timeout: 15
+
+  # Connection throttle time in milliseconds
+  connection_throttle_time: 1000
+
+  # Number of connections that can be opened in "connection_throttle_time" interval from the same address. To disable set value to -1
+  connection_throttle: 5
+
+  # Number of login requests that can be made in "connection_throttle_time" interval from the same address. To disable set value to -1
+  login_throttle: 2
+
+  # Enable RakNet cookies for additional security. Do NOT disable this unless you know what you are doing.
+  enable_cookies: true
+
+  # Enable HAProxy PROXY protocol (v1/v2) so the proxy can read the real client address when running behind a load balancer (e.g. HAProxy/UDP forwarder)
+  enable_proxy_protocol: false
+
+  # How many seconds should a connection be blocked if an error is thrown. Set to 0 to disable.
+  error_timeout: 15
+
+  # How many seconds a connection has to complete the login handshake (network settings -> login -> client-to-server handshake) before it is disconnected. Set to 0 to disable.
+  login_timeout: 10
+
+  # Bind each downstream connection to a random 127.0.0.0/8 source address when the target server is on loopback. Certain server softwares like BDS rate limit connections per IP, this causes problems when transferring multiple players at the same time to a certain server. Requires an OS that allows binding the whole loopback range.
+  random_downstream_loopback_address: false
+
+# NetherNet transport settings.
+nethernet:
+
+  # Accept NetherNet connections alongside RakNet
+  enabled: false
+
+  # builtin: the proxy serves the HTTP signaling endpoint on the listener port
+  # nxs: the proxy registers with the provider configured below and it hands over players
+  # hybrid: both, so players can arrive either way
+  # plugin: nothing is bound, a plugin feeds offers through the signaling API
+  signaling_mode: builtin
+
+  # Settings for the NXS signaling provider. Only used in the nxs and hybrid modes
+  nxs:
+
+    # Bearer token, or file:/path/to/token. Empty registers anonymously
+    token: ''
+
+    # Provider origin used for discovery and registration
+    endpoint: https://agent.warden.cloud
+
+    # Reachable UDP endpoints, as 198.51.100.1:19133 or [2001:db8::1]:19133.
+    # Empty derives them from the addresses this host holds, which is wrong behind a NAT
+    # or a forwarder. Name the endpoint players actually reach in that case.
+    advertise_addresses: []
+
+    # Instance metadata. The region and pool keys place this instance,
+    # anything else is a registration tag.
+    data: {}
+
+  # TCP port for the signaling endpoint. 0 mirrors the listener port, which is what clients expect
+  signaling_port: 0
+
+  # Addresses allowed to set X-Forwarded-For on signaling requests, as hosts or CIDR ranges
+  # such as 10.0.0.0/8. An http or https entry is fetched and read as one address per line.
+  # Needed when a reverse proxy fronts the signaling port, so the real client address survives.
+  trusted_proxies: []
+
+  # Read a HAProxy PROXY header, v1 or v2, on signaling connections from a trusted_proxies
+  # address. Connections without one are still served and fall back to X-Forwarded-For.
+  proxy_protocol: false
+
+  # Addresses put in the ICE candidates clients connect to. Empty derives them from the
+  # listener bind address. Set it when clients reach a different address or the listener
+  # binds a wildcard. An address this machine does not hold is announced as the public side
+  # of a NAT forwarding udp_port here, same port. Media bypasses a signaling reverse proxy,
+  # so its address only belongs here if it forwards the media port too.
+  advertise_addresses: []
+
+  # STUN and TURN servers ICE may use, such as stun:stun.l.google.com:19302.
+  # A proxy behind NAT needs STUN to learn its public address, TURN relays when no direct
+  # path exists. TURN credentials go in the URL, as turn:user:password@host:3478.
+  ice_servers: []
+
+  # Dedicated UDP port for NetherNet media, one socket for every peer.
+  # It must not be the listener port, which RakNet already holds.
+  # 0 picks an ephemeral port per peer, which needs no fixed port open but publishes a
+  # different one to every client.
+  udp_port: 0
+
+  # Serves signaling over HTTPS as well as HTTP, on the same port
+  https:
+
+    # Either a PEM chain, with its key in private_key, or a PKCS12 file, leaving that empty.
+    # Clients that reach signaling over TLS never see the first use trust prompt.
+    # Empty serves plaintext only.
+    certificate: ''
+
+    # PEM private key for the certificate. Leave empty when that is a PKCS12 file
+    private_key: ''
+
+    # Password for the PKCS12, or for the PEM key if it is encrypted.
+    # file:/path/to/password reads it from a file, which is the better place for it.
+    password: ''
+
+  # Unencrypted PEM private key holding the P-384 key identifying this operator to
+  # clients, generated on first start. Share it across a fleet to be trusted as one
+  # operator; replacing it re-prompts every returning player.
+  identity_file: keys/identity.pem
+
+  # Operator name shown in the first use trust prompt. Empty falls back to listener.name.
+  # Clients pin the key, not the name, so changing it prompts nobody again.
+  identity_domain: ''
+
+  # Seconds a connection has to finish ICE and DTLS before it is dropped
+  handshake_timeout: 30
+
+  # Seconds a server_type: bedrock downstream remembers which transport worked, so not every
+  # join probes. A failure on the remembered transport switches at once. 0 probes every join.
+  transport_memory: 300
+
+  # Maximum concurrent NetherNet connections. 0 follows the global player limit
+  max_connections: 0
+
+# Case-Sensitive permission list for players (empty using {})
+permissions: {}
+
+# List of permissions each player should get by default (empty using [])
+permissions_default:
+- waterdog.command.help
+- waterdog.command.info
+- waterdog.command.me
+- waterdog.player.transfer
+
+# Whether the debug output in the console should be enabled or not
+enable_debug: false
+
+# If enabled, encrypted connection between client and proxy will be created
+upstream_encryption: true
+
+# If enabled, only players which are authenticated with XBOX Live can join. If disabled, anyone can connect *with any name*
+online_mode: false
+
+# If enabled, the proxy will pass information like XUID or IP to the downstream server using custom fields in the LoginPacket
+use_login_extras: false
+
+# Replaces username spaces with underscores if enabled
+replace_username_spaces: false
+
+# Whether server query should be enabled
+enable_query: true
+
+# If enabled, when receiving a McpeTransferPacket, the proxy will check if the target server is in the downstream list, and if yes, use the fast transfer mechanism
+prefer_fast_transfer: true
+
+# If enabled, the proxy will inject all the proxy commands in the AvailableCommandsPacket, enabling autocompletion
+inject_proxy_commands: true
+
+# Algorithm used for upstream compression. Currently supported: zlib, snappy
+# This is only applicable on 1.19.30 and newer versions
+compression: zlib
+
+# Upstream server compression ratio(proxy to client), higher = less bandwidth, more cpu, lower vice versa
+upstream_compression_level: 6
+
+# Downstream server compression ratio(proxy to downstream server), higher = less bandwidth, more cpu, lower vice versa
+downstream_compression_level: 2
+
+# Education features require small adjustments to work correctly. Enable this option if any of downstream servers support education features.
+enable_edu_features: false
+
+# Enable/Disable the resource pack system
+enable_packs: true
+
+# If this is enabled, the client will not be able to use custom packs
+overwrite_client_packs: false
+
+# If enabled, the client will be forced to accept server-sided resource packs
+force_server_packs: false
+
+# You can set maximum pack size in MB to be cached.
+pack_cache_size: 16
+
+# Resource packs which should be delivered to clients using a CDN URL instead of the in-protocol chunked transfer.
+# Each URL must point directly to the pack zip file and be publicly reachable over HTTPS.
+# Packs are downloaded once at startup to determine their manifest, size and hash, and remain available
+# via the chunked transfer as fallback for clients which can not download from the CDN.
+pack_cdn_urls: []
+
+# Device platforms listed here never receive CDN URLs and instead get packs through the chunked transfer.
+# Example: [ANDROID, IOS]
+disable_cdn_for: []
+
+# If enabled, clients which support Vibrant Visuals (deferred lighting) will be forced to turn it off.
+force_disable_vibrant_visuals: false
+
+# Creating threads may be in some situations expensive. Specify minimum count of idle threads per internal thread executors. Set to -1 to auto-detect by core count.
+default_idle_threads: -1
+
+# Enable anonymous statistics that are sent to bstats. For more information, check out our bstats page at https://bstats.org/plugin/server-implementation/WaterdogPE/15678
+enable_statistics: false
+
+# Enables anonymous error reporting using bugsnag. This allows the WaterdogPE team to automatically collect issues occurring on WaterdogPE instances.
+enable_error_reporting: false
