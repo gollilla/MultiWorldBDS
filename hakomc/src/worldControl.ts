@@ -1,5 +1,6 @@
 import { http, HttpRequest, HttpRequestMethod } from '@minecraft/server-net';
 import { variables } from '@minecraft/server-admin';
+import { debug } from 'hakomc';
 
 /**
  * Thin client for the WaterdogPE WorldControl HTTP API
@@ -31,7 +32,7 @@ function baseUrl(): string {
   const configured = variables.get('worldControlApiUrl');
   if (typeof configured !== 'string' || configured.length === 0) {
     throw new Error(
-      "WorldControl: 'worldControlApiUrl' is not set in this server's variables config"
+      `WorldControl: worldControlApiUrl is not set in this server's variables config`
     );
   }
   return configured.replace(/\/+$/, '');
@@ -43,8 +44,10 @@ async function request(method: HttpRequestMethod, path: string, body?: string) {
     req.setBody(body);
     req.addHeader('Content-Type', 'application/x-www-form-urlencoded');
   }
+  debug(`WorldControl: ${method} ${path}`);
   const response = await http.request(req);
   if (response.status >= 400) {
+    debug(`WorldControl: ${method} ${path} failed (${response.status})`, response.body);
     throw new Error(`WorldControl ${method} ${path} failed: ${response.status} ${response.body}`);
   }
   return response;
@@ -67,9 +70,11 @@ export async function addWorld(name: string, gamemode: string = 'survival'): Pro
     '/worlds',
     `name=${encodeURIComponent(name)}&gamemode=${encodeURIComponent(gamemode)}`
   );
+  debug(`WorldControl: world '${name}' is up (${gamemode})`);
 }
 
 /** DELETE /worlds/{name} - unregisters and stops the given world's task. */
 export async function removeWorld(name: string): Promise<void> {
   await request(HttpRequestMethod.DELETE, `/worlds/${encodeURIComponent(name)}`);
+  debug(`WorldControl: world '${name}' removed`);
 }
