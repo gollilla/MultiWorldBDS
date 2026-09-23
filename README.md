@@ -66,6 +66,36 @@ inside a *different* running world - see below).
   client (the only way to make outbound HTTP calls from BDS-side
   scripts).
 
+### Usage
+
+Once deployed, everything goes through the WorldControl API on the
+Waterdog task (`<waterdog-ip>:8081` - VPC-internal only, see
+[Architecture](#architecture)). Two ways to call it:
+
+**Directly**, e.g. from something with network access to that VPC:
+
+```bash
+curl -X POST http://<waterdog-ip>:8081/worlds -d "name=survival2&gamemode=survival"
+curl http://<waterdog-ip>:8081/worlds
+curl -X DELETE http://<waterdog-ip>:8081/worlds/survival2
+```
+
+**From a BDS-side script**, using this repo's `worldControl.ts`
+(bundled as the `waterdog-worldcontrol` package):
+
+```ts
+import { addWorld, removeWorld, listWorlds } from 'waterdog-worldcontrol';
+
+await addWorld('survival2', 'survival');
+console.log(await listWorlds());
+await removeWorld('survival2');
+```
+
+This lets a behavior pack running on one world add or remove *other*
+worlds - e.g. a hub world with a "create world" command. The base URL
+is read from this server's `variables` config as `worldControlApiUrl`
+(see the comment in `src/worldControl.ts`).
+
 ### Building
 
 ```bash
@@ -114,6 +144,30 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 - **`waterdog/`** — WaterdogPEプロキシのイメージと、AWS SDK経由でワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle)。プロキシ設定は[`waterdog/config.yml`](waterdog/config.yml)、プラグイン本体は[`waterdog/plugin/src`](waterdog/plugin/src)を参照。
 - **`infra/`** — AWS CDK(TypeScript)スタック。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
 - **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップし、サブディレクトリではなくルートに置いている(npmのgit依存はリポジトリのサブディレクトリを指定する方法が無く、`npm install git+https://...`で直接インストールできるようにするため)。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。
+
+### 使い方
+
+デプロイ後は、すべてWaterdogタスク上のWorldControl API(`<waterdogのIP>:8081`、VPC内部のみ。[アーキテクチャ](#アーキテクチャ)参照)経由で操作する。呼び方は2通り。
+
+**直接叩く**(そのVPCにネットワーク到達できる場所から):
+
+```bash
+curl -X POST http://<waterdogのIP>:8081/worlds -d "name=survival2&gamemode=survival"
+curl http://<waterdogのIP>:8081/worlds
+curl -X DELETE http://<waterdogのIP>:8081/worlds/survival2
+```
+
+**BDS側のスクリプトから**、このリポジトリの`worldControl.ts`(`waterdog-worldcontrol`パッケージとしてバンドルされている)を使う場合:
+
+```ts
+import { addWorld, removeWorld, listWorlds } from 'waterdog-worldcontrol';
+
+await addWorld('survival2', 'survival');
+console.log(await listWorlds());
+await removeWorld('survival2');
+```
+
+これにより、あるワールドで動いているビヘイビアパックから*別の*ワールドを追加・削除できる(例: ハブワールドに「ワールド作成」コマンドを置く、など)。ベースURLはこのサーバーの`variables`設定から`worldControlApiUrl`として読み込まれる(`src/worldControl.ts`のコメント参照)。
 
 ### ビルド
 
