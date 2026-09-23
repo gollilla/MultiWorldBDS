@@ -66,9 +66,18 @@ export class EcsStack extends Stack {
     });
 
     // --- Waterdog proxy task definition -------------------------------
+    // Also carries the "lobby" world (see waterdog/config.yml) as a second
+    // container in the same task, rather than running it as its own RunTask
+    // instance like on-demand worlds. Two things that would otherwise cost
+    // extra for an always-on world: it shares Waterdog's public IP (each
+    // Fargate task with a public IP is billed for it, ~$0.005/hour), and it
+    // shares Waterdog's task-level CPU/memory instead of adding its own on
+    // top - Waterdog itself is a lightweight packet relay, so there's no
+    // need to size the task as proxy-cost-plus-BDS-cost; 1 vCPU / 2GB (the
+    // same size as a standalone BDS world task) covers both.
     const waterdogTaskDefinition = new FargateTaskDefinition(this, "WaterdogTaskDefinition", {
-      cpu: 512,
-      memoryLimitMiB: 1024,
+      cpu: 1024,
+      memoryLimitMiB: 2048,
     });
     waterdogTaskDefinition.addContainer("waterdog", {
       containerName: "waterdog",
@@ -90,6 +99,41 @@ export class EcsStack extends Stack {
           retention: RetentionDays.THREE_DAYS,
         }),
       }),
+    });
+
+    // Same network namespace as the waterdog container above, so it's
+    // reachable at 127.0.0.1 - on 19133, not 19132, since that port is
+    // already taken by Waterdog's own client-facing listener in this task.
+    const lobbyContainer = waterdogTaskDefinition.addContainer("lobby", {
+      containerName: "lobby",
+      image: ContainerImage.fromRegistry("itzg/minecraft-bedrock-server"),
+      environment: {
+        EULA: "TRUE",
+        SERVER_NAME: "lobby",
+        LEVEL_NAME: "lobby",
+        ONLINE_MODE: "false",
+        ALLOW_LIST: "false",
+        ALLOW_CHEATS: "true",
+        TRANSPORT: "raknet",
+        SERVER_PORT: "19133",
+      },
+      healthCheck: {
+        command: ["CMD-SHELL", "/usr/local/bin/mc-monitor status-bedrock --host 127.0.0.1 --port 19133"],
+        interval: Duration.seconds(15),
+        timeout: Duration.seconds(10),
+        retries: 3,
+        startPeriod: Duration.seconds(60),
+      },
+      logging: LogDrivers.awsLogs({
+        streamPrefix: "lobby",
+        logGroup: new LogGroup(this, "LobbyLogGroup", {
+          retention: RetentionDays.THREE_DAYS,
+        }),
+      }),
+    });
+    lobbyContainer.addPortMappings({
+      containerPort: 19133,
+      protocol: Protocol.UDP,
     });
 
     // Least-privilege: RunTask/StopTask/DescribeTasks scoped to this specific

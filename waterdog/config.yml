@@ -14,8 +14,7 @@ listener:
 
   # The server priority list. If not changed by plugins, the proxy will connect the player to the first of those servers
   priorities:
-  - world1
-  - world2
+  - lobby
 
   # The address to bind the server to
   host: 0.0.0.0:19132
@@ -40,12 +39,13 @@ listener:
 # A list of all downstream servers that are available right after starting
 # address field is formatted using ip:port
 # publicAddress is optional and can be set to the ip players can directly connect through
+# "lobby" runs in the same ECS task as Waterdog itself (see infra/lib/ecs-stack.ts),
+# on a different port to avoid clashing with Waterdog's own 19132 listener.
+# Worlds provisioned on demand via WorldControl (POST /worlds) register themselves
+# at runtime and don't need an entry here.
 servers:
-  world1:
-    address: bds-world1:19132
-    server_type: raknet
-  world2:
-    address: bds-world2:19132
+  lobby:
+    address: 127.0.0.1:19133
     server_type: raknet
 
 # Connection and security related settings. Do NOT edit unless you know what you are doing!
