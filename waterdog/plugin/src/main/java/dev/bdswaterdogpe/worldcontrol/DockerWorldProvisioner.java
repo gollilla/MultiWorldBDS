@@ -29,6 +29,12 @@ public class DockerWorldProvisioner implements WorldProvisioner {
     // docker/docker-compose.yml.
     private static final Path STATE_FILE = Path.of("/waterdog/state/worlds.txt");
 
+    // A pre-built world (see docker/world-templates/void) mounted read-only
+    // into this container - BDS's LEVEL_TYPE only controls generation of a
+    // brand new world and there's no "void" value for it, so a void world is
+    // seeded by copying an already-generated one in before first start.
+    private static final String VOID_TEMPLATE_DIR = "/waterdog/world-templates/void";
+
     private final Logger logger;
     private final String network;
     private final String dataDir;
@@ -48,29 +54,21 @@ public class DockerWorldProvisioner implements WorldProvisioner {
     }
 
     @Override
-    public InetSocketAddress startWorld(String name, String gamemode) throws InterruptedException {
+    public InetSocketAddress startWorld(String name, String gamemode, String worldType) throws InterruptedException {
         String container = "bds-" + name;
+        // Only a genuinely new world's data should be seeded from the void
+        // template - a world recreated after its container was lost (e.g. a
+        // host reboot) already has real data sitting in the bind-mounted
+        // host directory, which must not be overwritten with a fresh copy.
+        boolean isNewWorld = !this.knownWorlds().containsKey(name);
         String status = this.inspectStatus(container);
+
         if (status == null) {
-            run("docker", "run", "-d", "--name", container,
-                    "--network", this.network,
-                    // Survives the Docker daemon restarting (e.g. a host reboot)
-                    // on its own, without waiting on this plugin's reconcile.
-                    "--restart", "unless-stopped",
-                    "-v", this.dataDir + "/" + name + ":/data",
-                    "-e", "EULA=TRUE",
-                    "-e", "SERVER_NAME=" + name,
-                    "-e", "LEVEL_NAME=" + name,
-                    "-e", "GAMEMODE=" + gamemode,
-                    "-e", "ONLINE_MODE=false",
-                    "-e", "ALLOW_LIST=false",
-                    "-e", "ALLOW_CHEATS=true",
-                    // See EcsWorldProvisioner: itzg's image maps TRANSPORT into
-                    // server.properties as of PR #675, avoiding BDS defaulting to
-                    // NetherNet, which WaterdogPE's RakNet connection can't reach.
-                    "-e", "TRANSPORT=raknet",
-                    "-e", "SERVER_PORT=19132",
-                    "itzg/minecraft-bedrock-server");
+            if (isNewWorld && "void".equalsIgnoreCase(worldType)) {
+                this.createVoidWorld(container, name, gamemode);
+            } else {
+                this.runFreshContainer(container, name, gamemode, worldType);
+            }
         } else if (!"running".equals(status)) {
             run("docker", "start", container);
         }
@@ -83,8 +81,79 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         if (ip.isEmpty()) {
             throw new IllegalStateException("Container " + container + " has no IP on network " + this.network);
         }
-        this.persist(name, gamemode);
+        this.persist(name, gamemode, worldType);
         return new InetSocketAddress(ip, 19132);
+    }
+
+    private void runFreshContainer(String container, String name, String gamemode, String worldType)
+            throws InterruptedException {
+        run("docker", "run", "-d", "--name", container,
+                "--network", this.network,
+                // Survives the Docker daemon restarting (e.g. a host reboot)
+                // on its own, without waiting on this plugin's reconcile.
+                "--restart", "unless-stopped",
+                "-v", this.dataDir + "/" + name + ":/data",
+                "-e", "EULA=TRUE",
+                "-e", "SERVER_NAME=" + name,
+                "-e", "LEVEL_NAME=" + name,
+                "-e", "GAMEMODE=" + gamemode,
+                "-e", "LEVEL_TYPE=" + levelTypeFor(worldType),
+                "-e", "ONLINE_MODE=false",
+                "-e", "ALLOW_LIST=false",
+                "-e", "ALLOW_CHEATS=true",
+                // See EcsWorldProvisioner: itzg's image maps TRANSPORT into
+                // server.properties as of PR #675, avoiding BDS defaulting to
+                // NetherNet, which WaterdogPE's RakNet connection can't reach.
+                "-e", "TRANSPORT=raknet",
+                "-e", "SERVER_PORT=19132",
+                "itzg/minecraft-bedrock-server");
+    }
+
+    private void createVoidWorld(String container, String name, String gamemode) throws InterruptedException {
+        run("docker", "create", "--name", container,
+                "--network", this.network,
+                "--restart", "unless-stopped",
+                "-v", this.dataDir + "/" + name + ":/data",
+                "-e", "EULA=TRUE",
+                "-e", "SERVER_NAME=" + name,
+                "-e", "LEVEL_NAME=" + name,
+                "-e", "GAMEMODE=" + gamemode,
+                "-e", "ONLINE_MODE=false",
+                "-e", "ALLOW_LIST=false",
+                "-e", "ALLOW_CHEATS=true",
+                "-e", "TRANSPORT=raknet",
+                "-e", "SERVER_PORT=19132",
+                "itzg/minecraft-bedrock-server");
+
+        // docker cp won't create missing intermediate directories on the
+        // destination side (a freshly created container has no /data/worlds
+        // yet), so the template is staged here first under worlds/<name>,
+        // then that whole "worlds" directory is copied in as one unit -
+        // /data itself (the bind mount point) already exists even before
+        // the container starts, so copying *into* it works.
+        String stagingRoot = "/tmp/void-" + name;
+        String stagingWorldDir = stagingRoot + "/worlds/" + name;
+        try {
+            run("mkdir", "-p", stagingWorldDir);
+            run("cp", "-r", VOID_TEMPLATE_DIR + "/.", stagingWorldDir);
+            run("docker", "cp", stagingRoot + "/worlds", container + ":/data");
+        } finally {
+            run("rm", "-rf", stagingRoot);
+        }
+
+        run("docker", "start", container);
+    }
+
+    /**
+     * Maps a requested world type to BDS's LEVEL_TYPE values (DEFAULT/FLAT -
+     * see server.properties' level-type; there's no VOID value). Only
+     * relevant when generating a brand new world, so an unrecognized value
+     * (e.g. "void" when recreating an already-existing world after its
+     * container was lost) safely falls back to DEFAULT rather than failing -
+     * real data already sitting on the host takes precedence over it anyway.
+     */
+    private static String levelTypeFor(String worldType) {
+        return "flat".equalsIgnoreCase(worldType) ? "FLAT" : "DEFAULT";
     }
 
     @Override
@@ -98,8 +167,8 @@ public class DockerWorldProvisioner implements WorldProvisioner {
     }
 
     @Override
-    public Map<String, String> knownWorlds() {
-        Map<String, String> worlds = new LinkedHashMap<>();
+    public Map<String, WorldRecord> knownWorlds() {
+        Map<String, WorldRecord> worlds = new LinkedHashMap<>();
         if (!Files.exists(STATE_FILE)) {
             return worlds;
         }
@@ -108,10 +177,14 @@ public class DockerWorldProvisioner implements WorldProvisioner {
                 if (line.isBlank()) {
                     continue;
                 }
-                String[] parts = line.split("=", 2);
-                if (parts.length == 2) {
-                    worlds.put(parts[0], parts[1]);
+                String[] nameAndRest = line.split("=", 2);
+                if (nameAndRest.length != 2) {
+                    continue;
                 }
+                String[] gamemodeAndType = nameAndRest[1].split(":", 2);
+                String gamemode = gamemodeAndType[0];
+                String worldType = gamemodeAndType.length > 1 ? gamemodeAndType[1] : "normal";
+                worlds.put(nameAndRest[0], new WorldRecord(gamemode, worldType));
             }
         } catch (IOException e) {
             this.logger.warn("Failed to read WorldControl state file " + STATE_FILE, e);
@@ -119,23 +192,24 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         return worlds;
     }
 
-    private void persist(String name, String gamemode) {
-        Map<String, String> worlds = this.knownWorlds();
-        worlds.put(name, gamemode);
+    private void persist(String name, String gamemode, String worldType) {
+        Map<String, WorldRecord> worlds = this.knownWorlds();
+        worlds.put(name, new WorldRecord(gamemode, worldType));
         this.writeState(worlds);
     }
 
     private void forget(String name) {
-        Map<String, String> worlds = this.knownWorlds();
+        Map<String, WorldRecord> worlds = this.knownWorlds();
         worlds.remove(name);
         this.writeState(worlds);
     }
 
-    private void writeState(Map<String, String> worlds) {
+    private void writeState(Map<String, WorldRecord> worlds) {
         try {
             Files.createDirectories(STATE_FILE.getParent());
             StringBuilder content = new StringBuilder();
-            worlds.forEach((name, gamemode) -> content.append(name).append('=').append(gamemode).append('\n'));
+            worlds.forEach((name, record) -> content.append(name).append('=')
+                    .append(record.gamemode()).append(':').append(record.worldType()).append('\n'));
             Files.writeString(STATE_FILE, content.toString(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             this.logger.warn("Failed to write WorldControl state file " + STATE_FILE, e);

@@ -24,6 +24,9 @@ services:
       # (name -> gamemode), read back on startup to re-register and, if the
       # container is gone, re-provision them - see WorldControlPlugin.
       - ./data/state:/waterdog/state
+      # Pre-built world docker cp'd into a new world's data dir when
+      # worldType=void is requested - see DockerWorldProvisioner.
+      - ./world-templates:/waterdog/world-templates:ro
     ports:
       - "19132:19132/udp"
       # No authentication of its own - loopback-only, never published beyond

@@ -13,7 +13,9 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
@@ -32,6 +34,8 @@ import java.util.stream.Collectors;
  * selected by the PROVISIONER env var ("ecs", the default, or "docker").
  */
 public class WorldControlPlugin extends Plugin {
+
+    private static final Set<String> WORLD_TYPES = Set.of("normal", "flat", "void");
 
     private HttpServer httpServer;
     private WorldProvisioner provisioner;
@@ -78,7 +82,7 @@ public class WorldControlPlugin extends Plugin {
      * is called for them again.
      */
     private void reconcileKnownWorlds() {
-        Map<String, String> knownWorlds = this.provisioner.knownWorlds();
+        Map<String, WorldProvisioner.WorldRecord> knownWorlds = this.provisioner.knownWorlds();
         if (knownWorlds.isEmpty()) {
             return;
         }
@@ -88,9 +92,9 @@ public class WorldControlPlugin extends Plugin {
         reconcileThread.start();
     }
 
-    private void reconcileWorld(String name, String gamemode) {
+    private void reconcileWorld(String name, WorldProvisioner.WorldRecord record) {
         try {
-            InetSocketAddress address = this.provisioner.startWorld(name, gamemode);
+            InetSocketAddress address = this.provisioner.startWorld(name, record.gamemode(), record.worldType());
             ServerInfo serverInfo = ServerInfoType.RAKNET.getServerInfoFactory()
                     .createServerInfo(name, address, null);
             if (this.getProxy().registerServerInfo(serverInfo)) {
@@ -142,8 +146,13 @@ public class WorldControlPlugin extends Plugin {
         Map<String, String> form = parseForm(exchange.getRequestBody().readAllBytes());
         String name = form.get("name");
         String gamemode = form.getOrDefault("gamemode", "survival");
+        String worldType = form.getOrDefault("worldType", "normal").toLowerCase(Locale.ROOT);
         if (name == null || name.isBlank()) {
             this.respond(exchange, 400, "name is required");
+            return;
+        }
+        if (!WORLD_TYPES.contains(worldType)) {
+            this.respond(exchange, 400, "worldType must be one of: " + String.join(", ", WORLD_TYPES));
             return;
         }
         if (this.getProxy().getServerInfo(name) != null) {
@@ -153,7 +162,7 @@ public class WorldControlPlugin extends Plugin {
 
         InetSocketAddress address;
         try {
-            address = this.provisioner.startWorld(name, gamemode);
+            address = this.provisioner.startWorld(name, gamemode, worldType);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             this.respond(exchange, 500, "interrupted while provisioning world");

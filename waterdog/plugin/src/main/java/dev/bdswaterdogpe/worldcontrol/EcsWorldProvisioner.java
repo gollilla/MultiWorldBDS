@@ -58,7 +58,13 @@ public class EcsWorldProvisioner implements WorldProvisioner {
      * reachable, returning the address WaterdogPE should dial.
      */
     @Override
-    public InetSocketAddress startWorld(String name, String gamemode) throws InterruptedException {
+    public InetSocketAddress startWorld(String name, String gamemode, String worldType) throws InterruptedException {
+        if ("void".equalsIgnoreCase(worldType)) {
+            // DockerWorldProvisioner seeds a void world by docker cp-ing a
+            // pre-built one into place before first start; there's no EFS
+            // equivalent of that wired up here yet.
+            throw new IllegalArgumentException("worldType=void is not supported by the ECS provisioner yet");
+        }
         RunTaskResponse runResponse = this.ecs.runTask(RunTaskRequest.builder()
                 .cluster(this.clusterArn)
                 .taskDefinition(this.taskDefinitionArn)
@@ -78,6 +84,7 @@ public class EcsWorldProvisioner implements WorldProvisioner {
                                         keyValue("SERVER_NAME", name),
                                         keyValue("LEVEL_NAME", name),
                                         keyValue("GAMEMODE", gamemode),
+                                        keyValue("LEVEL_TYPE", "flat".equalsIgnoreCase(worldType) ? "FLAT" : "DEFAULT"),
                                         // TRANSPORT is correctly mapped into server.properties by itzg's image
                                         // as of https://github.com/itzg/docker-minecraft-bedrock-server/pull/675;
                                         // without this BDS defaults to NetherNet, which WaterdogPE's RakNet
