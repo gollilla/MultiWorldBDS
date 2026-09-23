@@ -6,6 +6,8 @@ export default defineConfig({
   files: [
     'src/**/*.ts',
     'src/**/*.tsx',
+    'examples/**/*.ts',
+    'examples/**/*.tsx',
   ],
   extends: [
     eslint.configs.recommended,
