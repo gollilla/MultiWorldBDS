@@ -27,15 +27,21 @@ export interface WorldSummary {
  * `--server-config` flag) as `{ "variables": { "worldControlApiUrl": "..." } }`
  * - the exact file name/flag is worth reconfirming against the current
  * @minecraft/server-admin docs before relying on it, since the module is beta.
+ *
+ * variables.get() is a privileged call that only works during early-execution
+ * (this module's top-level evaluation, before any event fires) - calling it
+ * lazily from inside a command callback throws "cannot be used in restricted
+ * execution", so it's read once here and cached.
  */
+const configuredWorldControlApiUrl = variables.get('worldControlApiUrl');
+
 function baseUrl(): string {
-  const configured = variables.get('worldControlApiUrl');
-  if (typeof configured !== 'string' || configured.length === 0) {
+  if (typeof configuredWorldControlApiUrl !== 'string' || configuredWorldControlApiUrl.length === 0) {
     throw new Error(
       `WorldControl: worldControlApiUrl is not set in this server's variables config`
     );
   }
-  return configured.replace(/\/+$/, '');
+  return configuredWorldControlApiUrl.replace(/\/+$/, '');
 }
 
 async function request(method: string, path: string, body?: string) {

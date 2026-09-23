@@ -15,6 +15,10 @@ services:
       - SERVER_NAME=${SERVER_NAME:-hakomc-server}
       - DEFAULT_PLAYER_PERMISSION_LEVEL=operator
       - EULA=TRUE
+      # Without this, BDS defaults to NetherNet and binds IPv6-only ("Accepting
+      # clients on [::]:<port>" in the logs) - unreachable from a plain RakNet
+      # connection (i.e. a normal Bedrock client's "Add Server" over IPv4).
+      - TRANSPORT=raknet
       - ONLINE_MODE=true
       - ALLOW_LIST=false
       - LEVEL_NAME=DevWorld
