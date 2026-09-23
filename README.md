@@ -25,15 +25,11 @@ registering it with the proxy - happens behind a single API call.
 
 ```mermaid
 flowchart TD
-    Client(["Bedrock client"]) -->|"UDP 19132 (RakNet)"| Proxy
+    Client(["Bedrock client"]) -->|"UDP 19132 (RakNet)"| WaterdogTask
 
-    subgraph WaterdogTask["WaterdogPE task (ECS Fargate, public)"]
-        Proxy["WaterdogPE proxy process"]
-        Plugin["WorldControl plugin (same JVM)<br/>GET/POST/DELETE /worlds<br/>(TCP 8081, VPC-internal only)"]
-        Plugin -->|"registerServerInfo() /<br/>removeServerInfo()"| Proxy
-    end
+    WaterdogTask["WaterdogPE task (ECS Fargate, public)<br/>proxy + WorldControl plugin, same JVM"]
 
-    Plugin -->|"RunTask / DescribeTasks / StopTask<br/>(IAM task role scoped to this<br/>cluster + the BDS task definition)"| BdsTasks
+    WaterdogTask -->|"ECS RunTask / StopTask<br/>(scoped IAM role)"| BdsTasks
 
     subgraph BdsTasks["BDS world tasks (ECS Fargate, private)"]
         World["reachable only from the<br/>Waterdog task's security group"]
@@ -126,15 +122,11 @@ BDSには複数ワールドを同時にロードする概念もプラグインAP
 
 ```mermaid
 flowchart TD
-    Client(["Bedrockクライアント"]) -->|"UDP 19132 (RakNet)"| Proxy
+    Client(["Bedrockクライアント"]) -->|"UDP 19132 (RakNet)"| WaterdogTask
 
-    subgraph WaterdogTask["WaterdogPEタスク (ECS Fargate, パブリック)"]
-        Proxy["WaterdogPEプロキシ本体"]
-        Plugin["WorldControlプラグイン (同一JVM内)<br/>GET/POST/DELETE /worlds<br/>(TCP 8081、VPC内部のみ)"]
-        Plugin -->|"registerServerInfo() /<br/>removeServerInfo()"| Proxy
-    end
+    WaterdogTask["WaterdogPEタスク (ECS Fargate, パブリック)<br/>プロキシ本体 + WorldControlプラグイン、同一JVM"]
 
-    Plugin -->|"RunTask / DescribeTasks / StopTask<br/>(IAMタスクロール。このクラスターと<br/>BDSタスク定義に限定したスコープ)"| BdsTasks
+    WaterdogTask -->|"ECS RunTask / StopTask<br/>(スコープ限定IAMロール)"| BdsTasks
 
     subgraph BdsTasks["BDSワールドタスク (ECS Fargate, プライベート)"]
         World["Waterdogタスクのセキュリティ<br/>グループからのみ到達可能"]
