@@ -1,0 +1,52 @@
+# Self-hosted deployment target, alternative to infra/ (AWS ECS Fargate).
+# See README.md for the security tradeoff of mounting the Docker socket here.
+services:
+  waterdogpe:
+    build: ../waterdog
+    container_name: waterdogpe
+    environment:
+      PROVISIONER: docker
+      DOCKER_NETWORK: bdsnet
+      # A HOST path, not a path inside this container: DockerWorldProvisioner
+      # passes it straight to `docker run -v`, which the host's Docker daemon
+      # resolves - not this container's own filesystem (Docker-outside-of-
+      # Docker via the mounted socket below). ${PWD} is this host directory
+      # (docker/), assuming `docker compose` is run from here.
+      DOCKER_DATA_DIR: ${PWD}/data/worlds
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config.yml:/waterdog/config.yml
+    ports:
+      - "19132:19132/udp"
+      # No authentication of its own - loopback-only, never published beyond
+      # this host. See README for the same reasoning as the ECS "control"
+      # security group.
+      - "127.0.0.1:8081:8081"
+    networks:
+      - bdsnet
+    restart: unless-stopped
+    depends_on:
+      - lobby
+
+  lobby:
+    image: itzg/minecraft-bedrock-server
+    container_name: bds-lobby
+    environment:
+      EULA: "TRUE"
+      SERVER_NAME: lobby
+      LEVEL_NAME: lobby
+      ONLINE_MODE: "false"
+      ALLOW_LIST: "false"
+      ALLOW_CHEATS: "true"
+      TRANSPORT: raknet
+      SERVER_PORT: "19132"
+    volumes:
+      - ./data/lobby:/data
+    networks:
+      - bdsnet
+    restart: unless-stopped
+
+networks:
+  bdsnet:
+    name: bdsnet
+    driver: bridge
