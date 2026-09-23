@@ -112,6 +112,42 @@ cd infra && npm install && npx cdk synth
 npm install && npm run build
 ```
 
+### Deploying
+
+Prerequisites: AWS credentials with permission to create the resources
+in `infra/lib` (VPC, ECS, IAM roles, security groups, log groups), a
+region set (`aws configure` default, `--profile`, or `CDK_DEFAULT_REGION`),
+and Docker running locally (the Waterdog image is built from source at
+deploy time). **This creates real, billed AWS resources.**
+
+```bash
+cd infra
+npm install
+
+# One-time per AWS account + region
+npx cdk bootstrap
+
+npx cdk deploy --all
+```
+
+`cdk deploy` prints `ClusterName` and `ServiceName` outputs. Use them
+to find the Waterdog task's current public IP (see [Architecture](#architecture)
+for why there's no fixed one):
+
+```bash
+TASK_ARN=$(aws ecs list-tasks --cluster <ClusterName> --service-name <ServiceName> --query 'taskArns[0]' --output text)
+ENI_ID=$(aws ecs describe-tasks --cluster <ClusterName> --tasks "$TASK_ARN" --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' --output text)
+aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Association.PublicIp' --output text
+```
+
+To tear everything down (stops billing; any BDS worlds started via
+`addWorld`/`POST /worlds` also need to be stopped first, since they're
+separate ad-hoc tasks the stacks don't track):
+
+```bash
+npx cdk destroy --all
+```
+
 ---
 
 <a id="japanese"></a>
@@ -187,4 +223,32 @@ cd infra && npm install && npx cdk synth
 
 # hakomc開発環境 + WorldControl操作ライブラリ (リポジトリルート)
 npm install && npm run build
+```
+
+### デプロイ
+
+前提: `infra/lib`が作るリソース(VPC・ECS・IAMロール・セキュリティグループ・ロググループ)を作成できるAWS認証情報、リージョン設定(`aws configure`のデフォルト、`--profile`、または`CDK_DEFAULT_REGION`)、そしてローカルでDockerが起動していること(Waterdogイメージはデプロイ時にソースからビルドされる)。**これは実際に課金されるAWSリソースを作成します。**
+
+```bash
+cd infra
+npm install
+
+# AWSアカウント+リージョンごとに1回だけ
+npx cdk bootstrap
+
+npx cdk deploy --all
+```
+
+`cdk deploy`は`ClusterName`と`ServiceName`という出力を表示する。これを使ってWaterdogタスクの現在のパブリックIPを調べられる(固定IPが無い理由は[アーキテクチャ](#アーキテクチャ)参照):
+
+```bash
+TASK_ARN=$(aws ecs list-tasks --cluster <ClusterName> --service-name <ServiceName> --query 'taskArns[0]' --output text)
+ENI_ID=$(aws ecs describe-tasks --cluster <ClusterName> --tasks "$TASK_ARN" --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' --output text)
+aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Association.PublicIp' --output text
+```
+
+全部破棄する場合(課金停止。`addWorld`/`POST /worlds`で起動したBDSワールドは、スタックの管理外の単発タスクなので、先に個別で止めておく必要がある):
+
+```bash
+npx cdk destroy --all
 ```

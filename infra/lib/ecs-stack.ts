@@ -1,4 +1,4 @@
-import { Stack, StackProps, Duration } from "aws-cdk-lib";
+import { Stack, StackProps, Duration, CfnOutput } from "aws-cdk-lib";
 import { Vpc, SecurityGroup, SubnetType } from "aws-cdk-lib/aws-ec2";
 import {
   Cluster,
@@ -130,7 +130,7 @@ export class EcsStack extends Stack {
     // Single instance, no load balancer (explicitly out of scope - see plan).
     // Its public IP is reassigned if the task is ever replaced; there is no
     // Elastic IP / Route53 update wired up for that yet.
-    new FargateService(this, "WaterdogService", {
+    const waterdogService = new FargateService(this, "WaterdogService", {
       cluster,
       taskDefinition: waterdogTaskDefinition,
       desiredCount: 1,
@@ -138,5 +138,13 @@ export class EcsStack extends Stack {
       vpcSubnets: { subnetType: SubnetType.PUBLIC },
       securityGroups: [props.waterdogSg],
     });
+
+    // The service has no fixed public IP (see above) - these outputs are
+    // just enough to look the current one up, e.g.:
+    //   aws ecs list-tasks --cluster <ClusterName> --service-name <ServiceName>
+    //   aws ecs describe-tasks --cluster <ClusterName> --tasks <task-arn>
+    //   aws ec2 describe-network-interfaces --network-interface-ids <eni-id>
+    new CfnOutput(this, "ClusterName", { value: cluster.clusterName });
+    new CfnOutput(this, "ServiceName", { value: waterdogService.serviceName });
   }
 }
