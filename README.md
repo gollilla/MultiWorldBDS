@@ -76,7 +76,9 @@ inside a *different* running world - see below).
   a behavior pack running on *one* world can add or remove *other*
   worlds, using `@minecraft/server-net`'s HTTP client (the only way to
   make outbound HTTP calls from BDS-side scripts).
-  [`examples/worldControlCommands.ts`](examples/worldControlCommands.ts)
+  [`examples/worldControlCommands`](examples/worldControlCommands) is a
+  standalone hakomc project (its own `docker compose up`-able dev
+  server) that depends on `hakomc-world` via the git URL above and
   wires it up to in-game slash commands
   (`/hakomc:worldadd`/`worldremove`/`worldlist`).
 
@@ -219,7 +221,7 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 - **`waterdog/`** — WaterdogPEプロキシのイメージと、`PROVISIONER`環境変数(`ecs`または`docker`)に応じてAWS SDKまたは`docker` CLIでワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle。[`waterdog/plugin/src`](waterdog/plugin/src)の`WorldProvisioner`/`EcsWorldProvisioner`/`DockerWorldProvisioner`を参照)。`waterdog/config.yml`は、`lobby`のアドレスを除いて以下2つのデプロイ先で共通のプロキシ設定。
 - **`infra/`** — AWS CDK(TypeScript)スタック、デプロイ先の1つ(`PROVISIONER=ecs`)。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
 - **`docker/`** — Docker Compose、もう1つのデプロイ先(`PROVISIONER=docker`)。WaterdogPEと`lobby`ワールドに加え、Waterdogコンテナにホストの Dockerソケットを直接マウントして、新しいワールドコンテナを`docker run`できるようにしている。これは、WorldControl APIに到達できる者にホストのDockerデーモンの全権限を渡すことを意味する — DockerソケットにはIAMのような権限の絞り込みができないので、専用のプロビジョニングサービスを別途構築・運用しない代わりに、ECS版の最小権限IAMポリシーというメリットを手放すトレードオフ。`:8081`はloopback限定のままにしておくこと([`docker/docker-compose.yml`](docker/docker-compose.yml)参照。理由はECS版の専用制御セキュリティグループと同じ)。
-- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。[`examples/worldControlCommands.ts`](examples/worldControlCommands.ts)がゲーム内スラッシュコマンド(`/hakomc:worldadd`/`worldremove`/`worldlist`)に繋いでいる。
+- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。[`examples/worldControlCommands`](examples/worldControlCommands)は、`hakomc-world`を上記のgit URL経由で依存として持つ、独立したhakomcプロジェクト(それ自体`docker compose up`できるdevサーバー)で、ゲーム内スラッシュコマンド(`/hakomc:worldadd`/`worldremove`/`worldlist`)に繋いでいる。
 
 ### 使い方
 
