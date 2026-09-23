@@ -34,14 +34,14 @@ services:
       - OPS=${OPS}
       # Writes config/default/variables.json for @minecraft/server-admin - see
       # src/index.ts. Points at the WorldControl API of MultiWorldBDS's
-      # docker/ WaterdogPE stack (127.0.0.1:8081 on the host, hence
-      # host.docker.internal - this is a separate Compose project, not on
-      # the same Docker network).
-      - VARIABLES=worldControlApiUrl=http://host.docker.internal:8081
-    extra_hosts:
-      # host.docker.internal isn't automatic on Linux like it is with Docker
-      # Desktop; host-gateway makes it resolve to the host here too.
-      - "host.docker.internal:host-gateway"
+      # docker/ WaterdogPE stack. That API is published as 127.0.0.1:8081 on
+      # the host only (no auth of its own), so it's unreachable from another
+      # container via host.docker.internal - instead this service joins
+      # docker/'s bdsnet network below and reaches it by container name,
+      # same as a world DockerWorldProvisioner provisions there would.
+      - VARIABLES=worldControlApiUrl=http://waterdogpe:8081
+    networks:
+      - bdsnet
     depends_on:
       dev:
         condition: service_completed_successfully
@@ -57,3 +57,7 @@ services:
     environment:
       - NODE_ENV=development
       - NPM_CONFIG_CACHE=/tmp/.npm
+
+networks:
+  bdsnet:
+    external: true
