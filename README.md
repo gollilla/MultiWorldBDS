@@ -44,15 +44,30 @@ inside a *different* running world - see below).
 ### Layout
 
 - **`waterdog/`** - the WaterdogPE proxy image and the `WorldControl`
-  plugin (Java/Gradle) that provisions worlds via the AWS SDK. See
-  [`waterdog/config.yml`](waterdog/config.yml) for the proxy config and
-  [`waterdog/plugin/src`](waterdog/plugin/src) for the plugin.
-- **`infra/`** - AWS CDK (TypeScript) stack: VPC (public subnets only,
-  no NAT Gateway - there's no load balancer or multi-instance HA in
-  scope, so it isn't needed), security groups, the ECS cluster/task
-  definitions, and the IAM policy that scopes WorldControl's AWS access
-  to `RunTask`/`StopTask`/`DescribeTasks` on this cluster and
-  `PassRole` on exactly the BDS task's two roles.
+  plugin (Java/Gradle) that provisions worlds, via either the AWS SDK
+  or the `docker` CLI depending on the `PROVISIONER` env var (`ecs` or
+  `docker` - see `WorldProvisioner`/`EcsWorldProvisioner`/
+  `DockerWorldProvisioner` in
+  [`waterdog/plugin/src`](waterdog/plugin/src)). `waterdog/config.yml`
+  is the proxy config shared by both deployment targets below, aside
+  from `lobby`'s address.
+- **`infra/`** - AWS CDK (TypeScript) stack, one deployment target
+  (`PROVISIONER=ecs`): VPC (public subnets only, no NAT Gateway -
+  there's no load balancer or multi-instance HA in scope, so it isn't
+  needed), security groups, the ECS cluster/task definitions, and the
+  IAM policy that scopes WorldControl's AWS access to
+  `RunTask`/`StopTask`/`DescribeTasks` on this cluster and `PassRole`
+  on exactly the BDS task's two roles.
+- **`docker/`** - Docker Compose, the other deployment target
+  (`PROVISIONER=docker`): WaterdogPE plus a `lobby` world, with the
+  host's Docker socket mounted into the Waterdog container so it can
+  `docker run` new world containers directly. That grants whoever can
+  reach the WorldControl API full control of the host's Docker daemon
+  - there's no IAM-style scoping possible for a Docker socket, so this
+  trades the ECS path's least-privilege IAM policy for not having to
+  build and run a separate provisioning service. Keep `:8081`
+  loopback-only (see `docker/docker-compose.yml`), same reasoning as
+  the ECS path's dedicated control security group.
 - **the repo root** (`package.json`, `src/`, `worlds/`, ...) - a
   [hakomc](https://github.com/hakomc/hakomc) dev environment (Bedrock
   Scripting API), bootstrapped from
@@ -112,7 +127,7 @@ cd infra && npm install && npx cdk synth
 npm install && npm run build
 ```
 
-### Deploying
+### Deploying (ECS Fargate)
 
 Prerequisites: AWS credentials with permission to create the resources
 in `infra/lib` (VPC, ECS, IAM roles, security groups, log groups), a
@@ -149,6 +164,25 @@ separate ad-hoc tasks the stacks don't track):
 npx cdk destroy --all
 ```
 
+### Deploying (Docker Compose)
+
+The self-hosted alternative - no AWS account needed. Mounts the host's
+Docker socket into the Waterdog container (see the `docker/` note in
+[Layout](#layout) for the tradeoff that implies).
+
+```bash
+cd docker
+docker compose up -d --build
+```
+
+Connect to this host on UDP 19132; `lobby` is the default world. Add/remove
+more the same way as [Usage](#usage) describes, against
+`http://127.0.0.1:8081`.
+
+```bash
+docker compose down   # world data under docker/data/ is kept
+```
+
 ---
 
 <a id="japanese"></a>
@@ -179,9 +213,10 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 
 ### 構成
 
-- **`waterdog/`** — WaterdogPEプロキシのイメージと、AWS SDK経由でワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle)。プロキシ設定は[`waterdog/config.yml`](waterdog/config.yml)、プラグイン本体は[`waterdog/plugin/src`](waterdog/plugin/src)を参照。
-- **`infra/`** — AWS CDK(TypeScript)スタック。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
-- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップし、サブディレクトリではなくルートに置いている(npmのgit依存はリポジトリのサブディレクトリを指定する方法が無く、`npm install git+https://...`で直接インストールできるようにするため)。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。
+- **`waterdog/`** — WaterdogPEプロキシのイメージと、`PROVISIONER`環境変数(`ecs`または`docker`)に応じてAWS SDKまたは`docker` CLIでワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle。[`waterdog/plugin/src`](waterdog/plugin/src)の`WorldProvisioner`/`EcsWorldProvisioner`/`DockerWorldProvisioner`を参照)。`waterdog/config.yml`は、`lobby`のアドレスを除いて以下2つのデプロイ先で共通のプロキシ設定。
+- **`infra/`** — AWS CDK(TypeScript)スタック、デプロイ先の1つ(`PROVISIONER=ecs`)。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
+- **`docker/`** — Docker Compose、もう1つのデプロイ先(`PROVISIONER=docker`)。WaterdogPEと`lobby`ワールドに加え、Waterdogコンテナにホストの Dockerソケットを直接マウントして、新しいワールドコンテナを`docker run`できるようにしている。これは、WorldControl APIに到達できる者にホストのDockerデーモンの全権限を渡すことを意味する — DockerソケットにはIAMのような権限の絞り込みができないので、専用のプロビジョニングサービスを別途構築・運用しない代わりに、ECS版の最小権限IAMポリシーというメリットを手放すトレードオフ。`:8081`はloopback限定のままにしておくこと([`docker/docker-compose.yml`](docker/docker-compose.yml)参照。理由はECS版の専用制御セキュリティグループと同じ)。
+- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。
 
 ### 使い方
 
@@ -226,7 +261,7 @@ cd infra && npm install && npx cdk synth
 npm install && npm run build
 ```
 
-### デプロイ
+### デプロイ (ECS Fargate)
 
 前提: `infra/lib`が作るリソース(VPC・ECS・IAMロール・セキュリティグループ・ロググループ)を作成できるAWS認証情報、リージョン設定(`aws configure`のデフォルト、`--profile`、または`CDK_DEFAULT_REGION`)、そしてローカルでDockerが起動していること(Waterdogイメージはデプロイ時にソースからビルドされる)。**これは実際に課金されるAWSリソースを作成します。**
 
@@ -252,4 +287,19 @@ aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --query 'N
 
 ```bash
 npx cdk destroy --all
+```
+
+### デプロイ (Docker Compose)
+
+自前ホストでの代替手段 — AWSアカウント不要。Waterdogコンテナにホストのdockerソケットをマウントする([構成](#構成)の`docker/`の項にあるトレードオフ参照)。
+
+```bash
+cd docker
+docker compose up -d --build
+```
+
+このホストのUDP 19132に接続する。`lobby`がデフォルトワールド。追加・削除は[使い方](#使い方)と同じ要領で、`http://127.0.0.1:8081`に対して行う。
+
+```bash
+docker compose down   # docker/data/配下のワールドデータは残る
 ```
