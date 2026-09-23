@@ -24,8 +24,23 @@ public interface WorldProvisioner {
      */
     InetSocketAddress startWorld(String name, String gamemode, String worldType) throws InterruptedException;
 
-    /** Stops and removes the given world's backend. No-op if not known. */
+    /**
+     * Stops and removes the given world's backend, leaving its data alone
+     * so it can be resumed later by calling {@link #startWorld} again with
+     * the same name. No-op if not known.
+     */
     void stopWorld(String name);
+
+    /**
+     * Stops the world's backend and permanently erases its data - unlike
+     * {@link #stopWorld}, this world cannot be resumed afterwards. Providers
+     * with nothing durable to erase beyond the backend itself (e.g.
+     * EcsWorldProvisioner - ECS ad-hoc worlds aren't currently persisted at
+     * all, a known gap in infra/) can leave this as an alias for stopWorld.
+     */
+    default void destroyWorld(String name) {
+        this.stopWorld(name);
+    }
 
     /**
      * Worlds this provisioner persisted from a previous run, keyed by name -

@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -20,10 +21,15 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
- * Exposes GET/POST/DELETE /worlds so a world can be added or removed at
- * runtime, without restarting the proxy. POST provisions the world's
- * backend as a standalone ECS Fargate task (see EcsWorldProvisioner) and
- * registers it with WaterdogPE; DELETE does the reverse.
+ * Exposes /worlds so a world can be added, stopped or deleted at runtime,
+ * without restarting the proxy:
+ * - GET /worlds - lists worlds currently registered with Waterdog.
+ * - POST /worlds - provisions a world's backend and registers it.
+ * - POST /worlds/{name}/stop - stops the backend and unregisters it,
+ *   leaving its data alone so a later POST /worlds with the same name
+ *   resumes it.
+ * - DELETE /worlds/{name} - stops the backend, unregisters it, and
+ *   permanently erases its data.
  *
  * This has no authentication of its own, so it must never be reachable
  * from the BDS worlds' network/security group or the public internet -
@@ -64,32 +70,41 @@ public class WorldControlPlugin extends Plugin {
             this.getLogger().error("Failed to start WorldControl HTTP API", e);
         }
 
-        if (Boolean.parseBoolean(System.getenv().getOrDefault("RECONCILE", "true"))) {
-            this.reconcileKnownWorlds();
-        } else {
-            this.getLogger().info("RECONCILE=false, not restoring previously added worlds");
-        }
+        this.bootstrapWorlds();
     }
 
     /**
-     * Re-registers worlds the provisioner persisted from a previous run (see
-     * WorldProvisioner#knownWorlds) - without this, a world added via
+     * Ensures every world that should be up when Waterdog starts actually
+     * is: worlds the provisioner persisted from a previous run (see
+     * WorldProvisioner#knownWorlds - without this, a world added via
      * POST /worlds would only stay reachable until the next Waterdog
-     * restart. Runs off the startup thread since re-provisioning a world
-     * can block for up to a few minutes (container start + health check).
-     * Set RECONCILE=false to skip this and start with only the worlds in
-     * config.yml, leaving previously added ones stopped until POST /worlds
-     * is called for them again.
+     * restart), plus, under the Docker target specifically, "lobby" -
+     * provisioned like any other world there instead of being a static
+     * config.yml entry, so it also picks up shared behavior packs (see
+     * DockerWorldProvisioner). Under ECS, lobby is a container co-located in
+     * Waterdog's own task (see infra/) and is already running by this point.
+     * Runs off the startup thread since provisioning a world can block for
+     * up to a few minutes (container start + health check). Set
+     * RECONCILE=false to skip restoring previously added worlds - lobby
+     * still starts.
      */
-    private void reconcileKnownWorlds() {
-        Map<String, WorldProvisioner.WorldRecord> knownWorlds = this.provisioner.knownWorlds();
-        if (knownWorlds.isEmpty()) {
+    private void bootstrapWorlds() {
+        Map<String, WorldProvisioner.WorldRecord> worlds = new LinkedHashMap<>();
+        if (this.provisioner instanceof DockerWorldProvisioner) {
+            worlds.put("lobby", new WorldProvisioner.WorldRecord("survival", "normal"));
+        }
+        if (Boolean.parseBoolean(System.getenv().getOrDefault("RECONCILE", "true"))) {
+            worlds.putAll(this.provisioner.knownWorlds());
+        } else {
+            this.getLogger().info("RECONCILE=false, not restoring previously added worlds");
+        }
+        if (worlds.isEmpty()) {
             return;
         }
-        Thread reconcileThread = new Thread(
-                () -> knownWorlds.forEach(this::reconcileWorld), "worldcontrol-reconcile");
-        reconcileThread.setDaemon(true);
-        reconcileThread.start();
+        Thread bootstrapThread = new Thread(
+                () -> worlds.forEach(this::reconcileWorld), "worldcontrol-reconcile");
+        bootstrapThread.setDaemon(true);
+        bootstrapThread.start();
     }
 
     private void reconcileWorld(String name, WorldProvisioner.WorldRecord record) {
@@ -118,15 +133,28 @@ public class WorldControlPlugin extends Plugin {
 
     private void handleWorlds(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
-        String worldName = path.length() > "/worlds/".length() ? path.substring("/worlds/".length()) : null;
+        String method = exchange.getRequestMethod();
 
         try {
-            switch (exchange.getRequestMethod()) {
-                case "GET" -> this.listWorlds(exchange);
-                case "POST" -> this.addWorld(exchange);
-                case "DELETE" -> this.removeWorld(exchange, worldName);
-                default -> this.respond(exchange, 405, "method not allowed");
+            if (path.equals("/worlds")) {
+                switch (method) {
+                    case "GET" -> this.listWorlds(exchange);
+                    case "POST" -> this.addWorld(exchange);
+                    default -> this.respond(exchange, 405, "method not allowed");
+                }
+                return;
             }
+            if (path.endsWith("/stop") && "POST".equals(method)) {
+                String name = path.substring("/worlds/".length(), path.length() - "/stop".length());
+                this.stopWorld(exchange, name);
+                return;
+            }
+            if ("DELETE".equals(method)) {
+                String name = path.substring("/worlds/".length());
+                this.removeWorld(exchange, name);
+                return;
+            }
+            this.respond(exchange, 405, "method not allowed");
         } catch (Exception e) {
             this.getLogger().error("Error handling WorldControl request", e);
             this.respond(exchange, 500, "internal error: " + e.getMessage());
@@ -169,7 +197,7 @@ public class WorldControlPlugin extends Plugin {
             return;
         } catch (RuntimeException e) {
             this.getLogger().error("Failed to provision world '" + name + "'", e);
-            this.provisioner.stopWorld(name);
+            this.provisioner.destroyWorld(name);
             this.respond(exchange, 502, "failed to provision world: " + e.getMessage());
             return;
         }
@@ -181,9 +209,25 @@ public class WorldControlPlugin extends Plugin {
             this.getLogger().info("Registered world '" + name + "' at " + address);
             this.respond(exchange, 200, "registered");
         } else {
-            // Lost a race with another registration of the same name; tear back down.
-            this.provisioner.stopWorld(name);
+            // Lost a race with another registration of the same name; tear back down completely.
+            this.provisioner.destroyWorld(name);
             this.respond(exchange, 409, "a world with that name is already registered");
+        }
+    }
+
+    private void stopWorld(HttpExchange exchange, String name) throws IOException {
+        if (name == null || name.isBlank()) {
+            this.respond(exchange, 400, "world name is required in the path");
+            return;
+        }
+
+        ServerInfo removed = this.getProxy().removeServerInfo(name);
+        this.provisioner.stopWorld(name);
+        if (removed != null) {
+            this.getLogger().info("Stopped world '" + name + "'");
+            this.respond(exchange, 200, "stopped");
+        } else {
+            this.respond(exchange, 404, "no such world");
         }
     }
 
@@ -194,10 +238,10 @@ public class WorldControlPlugin extends Plugin {
         }
 
         ServerInfo removed = this.getProxy().removeServerInfo(name);
-        this.provisioner.stopWorld(name);
+        this.provisioner.destroyWorld(name);
         if (removed != null) {
-            this.getLogger().info("Removed world '" + name + "'");
-            this.respond(exchange, 200, "removed");
+            this.getLogger().info("Deleted world '" + name + "'");
+            this.respond(exchange, 200, "deleted");
         } else {
             this.respond(exchange, 404, "no such world");
         }

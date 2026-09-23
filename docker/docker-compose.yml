@@ -15,8 +15,13 @@ services:
       DOCKER_DATA_DIR: ${PWD}/data/worlds
       # Whether to re-register/re-provision worlds added via POST /worlds on
       # startup. Set to "false" to leave previously added worlds stopped
-      # until POST /worlds is called for them again.
+      # until POST /worlds is called for them again. lobby always starts
+      # regardless of this setting - see WorldControlPlugin.
       RECONCILE: ${RECONCILE:-true}
+      # Optional: a HOST path (see the DOCKER_DATA_DIR comment above - same
+      # Docker-outside-of-Docker resolution) with behavior packs/config
+      # shared by every world this provisions, lobby included. See ./shared.
+      DOCKER_SHARED_DIR: ${PWD}/shared
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config.yml:/waterdog/config.yml
@@ -27,32 +32,16 @@ services:
       # Pre-built world docker cp'd into a new world's data dir when
       # worldType=void is requested - see DockerWorldProvisioner.
       - ./world-templates:/waterdog/world-templates:ro
+      # Read-only view of ./shared, used only to enumerate behavior pack
+      # names - DockerWorldProvisioner mounts the packs themselves into each
+      # world via the host path in DOCKER_SHARED_DIR above, not this one.
+      - ./shared:/waterdog/shared:ro
     ports:
       - "19132:19132/udp"
       # No authentication of its own - loopback-only, never published beyond
       # this host. See README for the same reasoning as the ECS "control"
       # security group.
       - "127.0.0.1:8081:8081"
-    networks:
-      - bdsnet
-    restart: unless-stopped
-    depends_on:
-      - lobby
-
-  lobby:
-    image: itzg/minecraft-bedrock-server
-    container_name: bds-lobby
-    environment:
-      EULA: "TRUE"
-      SERVER_NAME: lobby
-      LEVEL_NAME: lobby
-      ONLINE_MODE: "false"
-      ALLOW_LIST: "false"
-      ALLOW_CHEATS: "true"
-      TRANSPORT: raknet
-      SERVER_PORT: "19132"
-    volumes:
-      - ./data/lobby:/data
     networks:
       - bdsnet
     restart: unless-stopped

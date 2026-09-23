@@ -9,7 +9,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -35,14 +37,27 @@ public class DockerWorldProvisioner implements WorldProvisioner {
     // seeded by copying an already-generated one in before first start.
     private static final String VOID_TEMPLATE_DIR = "/waterdog/world-templates/void";
 
+    // Read-only view of docker/shared/ inside this container, used only to
+    // enumerate behavior pack names (see sharedMountArgs) - the actual host
+    // path handed to per-world `docker run`/`docker create` calls is
+    // this.sharedDir, resolved by the host daemon instead.
+    private static final Path SHARED_LOCAL_DIR = Path.of("/waterdog/shared");
+
     private final Logger logger;
     private final String network;
     private final String dataDir;
+    // Optional: a host directory (behavior_packs/<pack>/, config/,
+    // world_behavior_packs.json - see docker/shared/) bind-mounted into
+    // every world this provisioner starts, lobby included (it's provisioned
+    // the same way as any other world - see WorldControlPlugin's startup
+    // bootstrap). Null skips these mounts entirely.
+    private final String sharedDir;
 
     public DockerWorldProvisioner(Logger logger) {
         this.logger = logger;
         this.network = requireEnv("DOCKER_NETWORK");
         this.dataDir = requireEnv("DOCKER_DATA_DIR");
+        this.sharedDir = System.getenv("DOCKER_SHARED_DIR");
     }
 
     private static String requireEnv(String name) {
@@ -87,7 +102,7 @@ public class DockerWorldProvisioner implements WorldProvisioner {
 
     private void runFreshContainer(String container, String name, String gamemode, String worldType)
             throws InterruptedException {
-        run("docker", "run", "-d", "--name", container,
+        List<String> command = new ArrayList<>(List.of("docker", "run", "-d", "--name", container,
                 "--network", this.network,
                 // Survives the Docker daemon restarting (e.g. a host reboot)
                 // on its own, without waiting on this plugin's reconcile.
@@ -105,12 +120,14 @@ public class DockerWorldProvisioner implements WorldProvisioner {
                 // server.properties as of PR #675, avoiding BDS defaulting to
                 // NetherNet, which WaterdogPE's RakNet connection can't reach.
                 "-e", "TRANSPORT=raknet",
-                "-e", "SERVER_PORT=19132",
-                "itzg/minecraft-bedrock-server");
+                "-e", "SERVER_PORT=19132"));
+        command.addAll(this.sharedMountArgs(name));
+        command.add("itzg/minecraft-bedrock-server");
+        run(command.toArray(new String[0]));
     }
 
     private void createVoidWorld(String container, String name, String gamemode) throws InterruptedException {
-        run("docker", "create", "--name", container,
+        List<String> command = new ArrayList<>(List.of("docker", "create", "--name", container,
                 "--network", this.network,
                 "--restart", "unless-stopped",
                 "-v", this.dataDir + "/" + name + ":/data",
@@ -122,8 +139,10 @@ public class DockerWorldProvisioner implements WorldProvisioner {
                 "-e", "ALLOW_LIST=false",
                 "-e", "ALLOW_CHEATS=true",
                 "-e", "TRANSPORT=raknet",
-                "-e", "SERVER_PORT=19132",
-                "itzg/minecraft-bedrock-server");
+                "-e", "SERVER_PORT=19132"));
+        command.addAll(this.sharedMountArgs(name));
+        command.add("itzg/minecraft-bedrock-server");
+        run(command.toArray(new String[0]));
 
         // docker cp won't create missing intermediate directories on the
         // destination side (a freshly created container has no /data/worlds
@@ -136,6 +155,13 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         try {
             run("mkdir", "-p", stagingWorldDir);
             run("cp", "-r", VOID_TEMPLATE_DIR + "/.", stagingWorldDir);
+            if (this.sharedDir != null && !this.sharedDir.isBlank()) {
+                // The shared world_behavior_packs.json is already bind-mounted
+                // at this same destination path (from docker create above) -
+                // docker cp can't overwrite a file a mount is holding onto, so
+                // drop the template's own copy rather than conflict with it.
+                run("rm", "-f", stagingWorldDir + "/world_behavior_packs.json");
+            }
             run("docker", "cp", stagingRoot + "/worlds", container + ":/data");
         } finally {
             run("rm", "-rf", stagingRoot);
@@ -156,6 +182,55 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         return "flat".equalsIgnoreCase(worldType) ? "FLAT" : "DEFAULT";
     }
 
+    /**
+     * Bind mounts for the shared behavior packs/config directory (see
+     * docker/shared/ and the sharedDir field), skipped entirely when
+     * DOCKER_SHARED_DIR isn't set. world_behavior_packs.json is mounted as a
+     * single file rather than derived from each pack's manifest.json -
+     * there's no JSON parsing anywhere in this plugin, so it's maintained by
+     * hand alongside the packs it registers.
+     *
+     * behavior_packs is mounted one pack at a time, at
+     * /data/behavior_packs/<pack-name> - mounting /data/behavior_packs
+     * itself crashes BDS outright (its own first-boot extraction of the
+     * vanilla pack there appears to rename() into place, which fails across
+     * a mount boundary). Leaving the parent directory unmounted keeps that
+     * extraction on the same filesystem as /data. config/ doesn't have this
+     * problem and is mounted whole, read-write for the same
+     * itzg-writes-into-it-on-first-boot reason (a default permissions.json).
+     */
+    private List<String> sharedMountArgs(String name) {
+        if (this.sharedDir == null || this.sharedDir.isBlank()) {
+            return List.of();
+        }
+        List<String> args = new ArrayList<>();
+        for (String pack : this.sharedBehaviorPackNames()) {
+            args.add("-v");
+            args.add(this.sharedDir + "/behavior_packs/" + pack + ":/data/behavior_packs/" + pack + ":ro");
+        }
+        args.add("-v");
+        args.add(this.sharedDir + "/config:/data/config");
+        args.add("-v");
+        args.add(this.sharedDir + "/world_behavior_packs.json:/data/worlds/" + name
+                + "/world_behavior_packs.json:ro");
+        return args;
+    }
+
+    private List<String> sharedBehaviorPackNames() {
+        Path packsDir = SHARED_LOCAL_DIR.resolve("behavior_packs");
+        if (!Files.isDirectory(packsDir)) {
+            return List.of();
+        }
+        try (var entries = Files.list(packsDir)) {
+            return entries.filter(Files::isDirectory)
+                    .map(p -> p.getFileName().toString())
+                    .toList();
+        } catch (IOException e) {
+            this.logger.warn("Failed to list shared behavior packs in " + packsDir, e);
+            return List.of();
+        }
+    }
+
     @Override
     public void stopWorld(String name) {
         try {
@@ -163,7 +238,33 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         } catch (RuntimeException | InterruptedException e) {
             this.logger.warn("Failed to remove container for world '" + name + "'", e);
         }
+        // Deliberately not forgotten from state: startWorld sees this name
+        // still known, so a later call resumes it via a plain `docker run`
+        // against the untouched host data instead of re-seeding it as new.
+    }
+
+    @Override
+    public void destroyWorld(String name) {
+        this.stopWorld(name);
+        try {
+            this.purgeData(name);
+        } catch (RuntimeException | InterruptedException e) {
+            this.logger.warn("Failed to purge data for world '" + name + "'", e);
+        }
         this.forget(name);
+    }
+
+    /**
+     * Empties the world's host data directory via a throwaway container
+     * bind-mounted to it - this container has no filesystem access to
+     * DOCKER_DATA_DIR itself (it's a host path only ever resolved by the
+     * host daemon, same reason startWorld stages the void template rather
+     * than writing to it directly).
+     */
+    private void purgeData(String name) throws InterruptedException {
+        run("docker", "run", "--rm", "--entrypoint", "sh",
+                "-v", this.dataDir + "/" + name + ":/target",
+                "itzg/minecraft-bedrock-server", "-c", "rm -rf /target/*");
     }
 
     @Override

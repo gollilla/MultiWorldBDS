@@ -39,15 +39,9 @@ listener:
 # A list of all downstream servers that are available right after starting
 # address field is formatted using ip:port
 # publicAddress is optional and can be set to the ip players can directly connect through
-# "lobby" is its own container on the bdsnet Docker network (see docker/docker-compose.yml),
-# reached by Compose's DNS - unlike the ECS setup, where it's co-located with Waterdog in
-# the same task and reached at 127.0.0.1 instead.
-# Worlds provisioned on demand via WorldControl (POST /worlds) register themselves
-# at runtime and don't need an entry here.
-servers:
-  lobby:
-    address: lobby:19132
-    server_type: raknet
+# Empty: even "lobby" is provisioned dynamically now, the same way as any
+# world added via POST /worlds - see WorldControlPlugin's startup bootstrap.
+servers: {}
 
 # Connection and security related settings. Do NOT edit unless you know what you are doing!
 network_settings:

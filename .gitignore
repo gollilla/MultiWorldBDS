@@ -24,5 +24,12 @@ worlds/**/levelname.txt
 # hand-edited - see examples/worldControlCommands.ts
 config/default/variables.json
 
+# itzg unpacks a default permissions.json into docker/shared/config on first
+# boot (behavior_packs doesn't have this problem - see the comment on
+# DockerWorldProvisioner.sharedMountArgs for why only individual pack
+# subdirectories are shared, never the parent) - not hand-authored, so don't
+# track it.
+docker/shared/config/default/permissions.json
+
 # OS
 .DS_Store
