@@ -1,0 +1,37 @@
+{
+  "name": "waterdog-worldcontrol",
+  "version": "1.0.0",
+  "description": "hakomc dev server + scripts that call the WaterdogPE WorldControl API to add/remove worlds",
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:app && npm run build:lib",
+    "build:app": "tsc && vite build --config vite.config.app.js",
+    "build:lib": "tsc && vite build --config vite.config.lib.js",
+    "prepare": "npm run build:lib"
+  },
+  "main": "./dist/lib/index.js",
+  "module": "./dist/lib/index.js",
+  "types": "./dist/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js"
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@minecraft/server": "^2.8.0",
+    "@minecraft/server-admin": "1.0.0-beta.11940b24",
+    "@minecraft/server-net": "1.0.0-beta.11940b24",
+    "@minecraft/server-ui": "2.1.0",
+    "eslint": "^10.8.0",
+    "prismarine-nbt": "^2.8.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.2",
+    "vite": "^7.1.7",
+    "vite-plugin-dts": "^5.0.3"
+  },
+  "dependencies": {
+    "hakomc": "^1.0.0"
+  }
+}
