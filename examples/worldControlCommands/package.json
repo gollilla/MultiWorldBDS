@@ -1,0 +1,25 @@
+{
+  "name": "worldcontrol-commands-example",
+  "version": "1.0.0",
+  "description": "Standalone example: drive the WorldControl API from ScriptAPI slash commands",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && vite build --config vite.config.app.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@minecraft/server": "^2.8.0",
+    "@minecraft/server-admin": "1.0.0-beta.11940b24",
+    "@minecraft/server-ui": "2.1.0",
+    "eslint": "^10.8.0",
+    "prismarine-nbt": "^2.8.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.2",
+    "vite": "^7.1.7"
+  },
+  "dependencies": {
+    "hakomc": "^1.0.0",
+    "hakomc-world": "git+https://github.com/gollilla/MultiWorldBDS.git"
+  }
+}

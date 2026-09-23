@@ -1,16 +1,11 @@
 /**
- * Example: expose addWorld/removeWorld/listWorlds as in-game slash commands,
- * so you can drive WorldControl straight from ScriptAPI instead of curl.
- *
- * Reference code, not wired into any build - hakomc-world's own src/index.ts
- * stays a plain re-export of worldControl.ts. To actually run this, import it
- * for its side effect from a behavior pack's script entry (src/index.ts for
- * this repo's own dev world, or your own project's if you're consuming
- * hakomc-world as a library).
+ * Exposes addWorld/removeWorld/listWorlds (from the hakomc-world package,
+ * https://github.com/gollilla/MultiWorldBDS) as in-game slash commands, so
+ * you can drive WorldControl straight from ScriptAPI instead of curl.
  *
  * Requires config/default/variables.json (or the itzg image's VARIABLES env
- * var, see docker-compose.yml at the repo root) to set worldControlApiUrl to
- * a reachable WorldControl instance - e.g. the one under docker/.
+ * var, see docker-compose.yml) to set worldControlApiUrl to a reachable
+ * WorldControl instance - e.g. the one under MultiWorldBDS's docker/.
  */
 import {
   system,
@@ -20,7 +15,7 @@ import {
   CommandPermissionLevel,
 } from '@minecraft/server';
 import type { CustomCommand, CustomCommandOrigin, Player, StartupEvent } from '@minecraft/server';
-import { addWorld, removeWorld, listWorlds } from '../src/worldControl';
+import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
 
 function reply(origin: CustomCommandOrigin, message: string): void {
   const source = origin.sourceEntity;
@@ -38,7 +33,7 @@ system.beforeEvents.startup.subscribe((init: StartupEvent) => {
 
   const worldAdd: CustomCommand = {
     name: 'hakomc:worldadd',
-    description: 'Provisions a new world and registers it with Waterdog - doesn\'t move you there, run /server <name> once it\'s up',
+    description: `Provisions a new world and registers it with Waterdog - doesn't move you there, run /server <name> once it's up`,
     permissionLevel: CommandPermissionLevel.GameDirectors,
     mandatoryParameters: [{ type: CustomCommandParamType.String, name: 'name' }],
     optionalParameters: [{ type: CustomCommandParamType.String, name: 'gamemode' }],
