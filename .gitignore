@@ -9,11 +9,16 @@ waterdog/plugin/build/
 node_modules/
 infra/cdk.out/
 infra/node_modules/
-hakomc/node_modules/
-hakomc/dist/
+infra/dist/
+dist*
+
+# hakomc dev world save data
+worlds/**/db
+worlds/**/level.dat
+worlds/**/level.dat_old
+worlds/**/levelname.txt
+
+.env
 
 # OS
 .DS_Store
-
-# CDK
-infra/dist/

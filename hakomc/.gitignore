@@ -1,7 +1,0 @@
-worlds/**/db
-worlds/**/level.dat
-worlds/**/level.dat_old
-worlds/**/levelname.txt
-node_modules/
-.env
-dist*

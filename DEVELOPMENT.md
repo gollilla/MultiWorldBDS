@@ -1,6 +1,12 @@
-# hakomc-server
+# Development
 
-A development template for Minecraft Bedrock Edition add-ons built on [hakomc](https://github.com/hakomc/hakomc), with a Docker-based Bedrock Dedicated Server (BDS) environment for local testing.
+This project's Bedrock-side code (`src/`, `worlds/DevWorld/`, ...) was
+bootstrapped from [hakomc-server](https://github.com/hakomc/hakomc-server),
+a development template for Minecraft Bedrock Edition add-ons built on
+[hakomc](https://github.com/hakomc/hakomc), with a Docker-based Bedrock
+Dedicated Server (BDS) environment for local testing. This doc is that
+template's own setup/development guide - see [`README.md`](README.md)
+for what this repository as a whole is about.
 
 ## Prerequisites
 

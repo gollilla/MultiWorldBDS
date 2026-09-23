@@ -53,13 +53,19 @@ inside a *different* running world - see below).
   definitions, and the IAM policy that scopes WorldControl's AWS access
   to `RunTask`/`StopTask`/`DescribeTasks` on this cluster and
   `PassRole` on exactly the BDS task's two roles.
-- **`hakomc/`** - a [hakomc](https://github.com/hakomc/hakomc) dev
-  environment (Bedrock Scripting API), bootstrapped from
-  [hakomc-server](https://github.com/hakomc/hakomc-server). Its
-  `src/worldControl.ts` is a small client for the WorldControl API so a
-  behavior pack running on *one* world can add or remove *other*
-  worlds, using `@minecraft/server-net`'s HTTP client (the only way to
-  make outbound HTTP calls from BDS-side scripts).
+- **the repo root** (`package.json`, `src/`, `worlds/`, ...) - a
+  [hakomc](https://github.com/hakomc/hakomc) dev environment (Bedrock
+  Scripting API), bootstrapped from
+  [hakomc-server](https://github.com/hakomc/hakomc-server) and kept at
+  the repo root (rather than nested in a subdirectory) so it can be
+  installed directly via a plain `npm install git+https://...` -
+  npm's git dependency support has no way to point at a subdirectory
+  of a repo. `src/worldControl.ts` is a small client for the
+  WorldControl API so a behavior pack running on *one* world can add
+  or remove *other* worlds, using `@minecraft/server-net`'s HTTP
+  client (the only way to make outbound HTTP calls from BDS-side
+  scripts). See [`DEVELOPMENT.md`](DEVELOPMENT.md) for the dev server
+  setup this template also provides.
 
 ### Status
 
@@ -96,16 +102,17 @@ docker build -t waterdogpe ./waterdog
 # does not deploy anything
 cd infra && npm install && npx cdk synth
 
-# hakomc dev environment + WorldControl operations library
-cd hakomc && npm install && npm run build
+# hakomc dev environment + WorldControl operations library (repo root)
+npm install && npm run build
 ```
 
 ### License
 
-Not yet decided for this repo's own code (`waterdog/`, `infra/`).
-`hakomc/` carries its own GPLv3 license, inherited from the
+The hakomc dev environment/library at the repo root carries the GPLv3
+license (see [`LICENSE`](LICENSE)) inherited from the
 [hakomc-server](https://github.com/hakomc/hakomc-server) template it
-was bootstrapped from.
+was bootstrapped from. `waterdog/` and `infra/` don't have a license
+chosen yet.
 
 ---
 
@@ -139,7 +146,7 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 
 - **`waterdog/`** — WaterdogPEプロキシのイメージと、AWS SDK経由でワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle)。プロキシ設定は[`waterdog/config.yml`](waterdog/config.yml)、プラグイン本体は[`waterdog/plugin/src`](waterdog/plugin/src)を参照。
 - **`infra/`** — AWS CDK(TypeScript)スタック。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
-- **`hakomc/`** — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。
+- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップし、サブディレクトリではなくルートに置いている(npmのgit依存はリポジトリのサブディレクトリを指定する方法が無く、`npm install git+https://...`で直接インストールできるようにするため)。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。開発サーバーのセットアップ手順は[`DEVELOPMENT.md`](DEVELOPMENT.md)を参照。
 
 ### 現状
 
@@ -162,10 +169,10 @@ docker build -t waterdogpe ./waterdog
 # デプロイは行わない
 cd infra && npm install && npx cdk synth
 
-# hakomc開発環境 + WorldControl操作ライブラリ
-cd hakomc && npm install && npm run build
+# hakomc開発環境 + WorldControl操作ライブラリ (リポジトリルート)
+npm install && npm run build
 ```
 
 ### ライセンス
 
-このリポジトリ自体のコード(`waterdog/`、`infra/`)についてはまだ未決定。`hakomc/`は、ブートストラップ元の[hakomc-server](https://github.com/hakomc/hakomc-server)テンプレートから継承した独自のGPLv3ライセンスを持つ。
+リポジトリルートのhakomc開発環境/ライブラリは、ブートストラップ元の[hakomc-server](https://github.com/hakomc/hakomc-server)テンプレートから継承した[`LICENSE`](LICENSE)(GPLv3)を持つ。`waterdog/`と`infra/`のライセンスはまだ未決定。
