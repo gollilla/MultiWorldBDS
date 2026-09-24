@@ -49,25 +49,38 @@ inside a *different* running world - see below).
   `docker` - see `WorldProvisioner`/`EcsWorldProvisioner`/
   `DockerWorldProvisioner` in
   [`waterdog/plugin/src`](waterdog/plugin/src)). `waterdog/config.yml`
-  is the proxy config shared by both deployment targets below, aside
-  from `lobby`'s address.
+  is the ECS target's proxy config, with `lobby` as a static entry
+  (it's co-located in Waterdog's own task there - see
+  [Deploying (ECS Fargate)](#deploying-ecs-fargate)); the Docker
+  Compose target uses its own copy, `docker/config.yml`, with no
+  static servers at all - see the `docker/` entry below.
 - **`infra/`** - AWS CDK (TypeScript) stack, one deployment target
   (`PROVISIONER=ecs`): VPC (public subnets only, no NAT Gateway -
   there's no load balancer or multi-instance HA in scope, so it isn't
   needed), security groups, the ECS cluster/task definitions, and the
   IAM policy that scopes WorldControl's AWS access to
   `RunTask`/`StopTask`/`DescribeTasks` on this cluster and `PassRole`
-  on exactly the BDS task's two roles.
+  on exactly the BDS task's two roles. Worlds added here don't survive
+  a Waterdog task replacement - there's no reconcile-on-boot for this
+  target yet (see the Docker target below).
 - **`docker/`** - Docker Compose, the other deployment target
-  (`PROVISIONER=docker`): WaterdogPE plus a `lobby` world, with the
+  (`PROVISIONER=docker`): a single `waterdogpe` service, with the
   host's Docker socket mounted into the Waterdog container so it can
-  `docker run` new world containers directly. That grants whoever can
-  reach the WorldControl API full control of the host's Docker daemon
-  - there's no IAM-style scoping possible for a Docker socket, so this
-  trades the ECS path's least-privilege IAM policy for not having to
-  build and run a separate provisioning service. Keep `:8081`
+  `docker run` new world containers directly - `lobby` included, it's
+  provisioned the same way as any other world at startup rather than
+  being its own Compose service. That grants whoever can reach the
+  WorldControl API full control of the host's Docker daemon - there's
+  no IAM-style scoping possible for a Docker socket, so this trades
+  the ECS path's least-privilege IAM policy for not having to build
+  and run a separate provisioning service. Keep `:8081`
   loopback-only (see `docker/docker-compose.yml`), same reasoning as
-  the ECS path's dedicated control security group.
+  the ECS path's dedicated control security group. Worlds added via
+  `POST /worlds` persist across restarts (container data under
+  `docker/data/`, a small state file under `docker/data/state/` - see
+  [Persistence and reconciliation](#persistence-and-reconciliation));
+  `docker/shared/` optionally distributes the same behavior
+  packs/config to every world, lobby included - see
+  [Shared behavior packs and config](#shared-behavior-packs-and-config).
 - **the repo root** (`package.json`, `src/`, `worlds/`, ...) - a
   [hakomc](https://github.com/hakomc/hakomc) dev environment (Bedrock
   Scripting API), bootstrapped from
@@ -80,7 +93,7 @@ inside a *different* running world - see below).
   standalone hakomc project (its own `docker compose up`-able dev
   server) that depends on `hakomc-world` via the git URL above and
   wires it up to in-game slash commands
-  (`/hakomc:worldadd`/`worldremove`/`worldlist`).
+  (`/hakomc:worldadd`/`worldstop`/`worldremove`/`worldlist`).
 
 ### Usage
 
@@ -91,8 +104,9 @@ Waterdog task (`<waterdog-ip>:8081` - VPC-internal only, see
 **Directly**, e.g. from something with network access to that VPC:
 
 ```bash
-curl -X POST http://<waterdog-ip>:8081/worlds -d "name=survival2&gamemode=survival"
+curl -X POST http://<waterdog-ip>:8081/worlds -d "name=survival2&gamemode=survival&worldType=normal"
 curl http://<waterdog-ip>:8081/worlds
+curl -X POST http://<waterdog-ip>:8081/worlds/survival2/stop
 curl -X DELETE http://<waterdog-ip>:8081/worlds/survival2
 ```
 
@@ -105,17 +119,35 @@ npm install git+https://github.com/gollilla/MultiWorldBDS.git
 ```
 
 ```ts
-import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds } from 'hakomc-world';
 
-await addWorld('survival2', 'survival');
+await addWorld('survival2', 'survival', 'normal');
 console.log(await listWorlds());
-await removeWorld('survival2');
+await stopWorld('survival2');   // pauses it, data kept - addWorld resumes it later
+await removeWorld('survival2'); // stops it AND erases its data for good
 ```
 
 This lets a behavior pack running on one world add or remove *other*
 worlds - e.g. a hub world with a "create world" command. The base URL
 is read from this server's `variables` config as `worldControlApiUrl`
 (see the comment in `src/worldControl.ts`).
+
+`POST /worlds` takes:
+
+- `name` (required)
+- `gamemode` (optional, default `survival`)
+- `worldType` (optional, default `normal`): `normal` for a regular
+  generated world, `flat` for BDS's flat preset, or `void` for a
+  pre-built empty world - **Docker target only**, see
+  [Deploying (Docker Compose)](#deploying-docker-compose); requesting
+  `void` against the ECS target fails with a 502.
+
+`POST /worlds/{name}/stop` vs `DELETE /worlds/{name}`: both unregister
+the world from Waterdog and stop its backend (ECS task/Docker
+container), but only `DELETE` erases its data. Calling `POST /worlds`
+again for a name that was `stop`'d resumes it against its existing
+world data instead of generating a new one (so `worldType` is only
+honored the first time a name is ever created).
 
 ### Building
 
@@ -180,13 +212,50 @@ cd docker
 docker compose up -d --build
 ```
 
-Connect to this host on UDP 19132; `lobby` is the default world. Add/remove
-more the same way as [Usage](#usage) describes, against
-`http://127.0.0.1:8081`.
+Connect to this host on UDP 19132; `lobby` is provisioned automatically
+on startup, the same way as any other world. Add/remove more the same
+way as [Usage](#usage) describes, against `http://127.0.0.1:8081`.
 
 ```bash
 docker compose down   # world data under docker/data/ is kept
 ```
+
+#### Persistence and reconciliation
+
+Every world provisioned via `POST /worlds` (`lobby` included) is
+tracked in a small state file under `docker/data/state/`. On startup,
+`waterdogpe` re-registers every world still known there against its
+existing container (`docker start` if the container survived, a fresh
+`docker run` reusing its data volume if it didn't - e.g. after a host
+reboot). Set `RECONCILE=false` (in `docker/docker-compose.yml` or the
+environment) to skip this and leave previously added worlds stopped
+until `POST /worlds` is called for them again; `lobby` always starts
+regardless of this setting.
+
+#### Shared behavior packs and config
+
+`docker/shared/` is optionally mounted into every world this target
+provisions, lobby included:
+
+- `docker/shared/behavior_packs/<pack-name>/` - one subdirectory per
+  pack, mounted read-only at `/data/behavior_packs/<pack-name>` in
+  every world. Mounted per-pack rather than as one `behavior_packs`
+  directory - BDS crashes outright if the whole directory is a mount
+  point (its own first-boot extraction of the vanilla pack into that
+  same directory doesn't survive being on a different filesystem).
+- `docker/shared/world_behavior_packs.json` - hand-maintained (there's
+  no JSON parsing anywhere in this plugin), bind-mounted read-only as
+  each world's own `world_behavior_packs.json` so BDS actually
+  activates the packs above.
+- `docker/shared/config/` - mounted read-write at `/data/config` in
+  every world (e.g. `config/default/permissions.json`).
+
+Leave `DOCKER_SHARED_DIR` unset in `docker/docker-compose.yml` to skip
+all of this. `docker/world-templates/void/` is a separate, unrelated
+mount: a single pre-built empty world, `docker cp`'d into place the
+first time a `worldType=void` world is created (BDS has no built-in
+way to generate one) - replace its contents with your own template if
+you want a different starting point for void worlds.
 
 ---
 
@@ -218,10 +287,10 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 
 ### 構成
 
-- **`waterdog/`** — WaterdogPEプロキシのイメージと、`PROVISIONER`環境変数(`ecs`または`docker`)に応じてAWS SDKまたは`docker` CLIでワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle。[`waterdog/plugin/src`](waterdog/plugin/src)の`WorldProvisioner`/`EcsWorldProvisioner`/`DockerWorldProvisioner`を参照)。`waterdog/config.yml`は、`lobby`のアドレスを除いて以下2つのデプロイ先で共通のプロキシ設定。
-- **`infra/`** — AWS CDK(TypeScript)スタック、デプロイ先の1つ(`PROVISIONER=ecs`)。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。
-- **`docker/`** — Docker Compose、もう1つのデプロイ先(`PROVISIONER=docker`)。WaterdogPEと`lobby`ワールドに加え、Waterdogコンテナにホストの Dockerソケットを直接マウントして、新しいワールドコンテナを`docker run`できるようにしている。これは、WorldControl APIに到達できる者にホストのDockerデーモンの全権限を渡すことを意味する — DockerソケットにはIAMのような権限の絞り込みができないので、専用のプロビジョニングサービスを別途構築・運用しない代わりに、ECS版の最小権限IAMポリシーというメリットを手放すトレードオフ。`:8081`はloopback限定のままにしておくこと([`docker/docker-compose.yml`](docker/docker-compose.yml)参照。理由はECS版の専用制御セキュリティグループと同じ)。
-- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。[`examples/worldControlCommands`](examples/worldControlCommands)は、`hakomc-world`を上記のgit URL経由で依存として持つ、独立したhakomcプロジェクト(それ自体`docker compose up`できるdevサーバー)で、ゲーム内スラッシュコマンド(`/hakomc:worldadd`/`worldremove`/`worldlist`)に繋いでいる。
+- **`waterdog/`** — WaterdogPEプロキシのイメージと、`PROVISIONER`環境変数(`ecs`または`docker`)に応じてAWS SDKまたは`docker` CLIでワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle。[`waterdog/plugin/src`](waterdog/plugin/src)の`WorldProvisioner`/`EcsWorldProvisioner`/`DockerWorldProvisioner`を参照)。`waterdog/config.yml`はECSデプロイ先のプロキシ設定で、`lobby`を静的エントリとして持つ(そちらではWaterdog自身のタスクに同居している。[デプロイ (ECS Fargate)](#デプロイ-ecs-fargate)参照)。Docker Composeデプロイ先は別コピーの`docker/config.yml`を使い、静的サーバーは一切持たない — 下の`docker/`の項を参照。
+- **`infra/`** — AWS CDK(TypeScript)スタック、デプロイ先の1つ(`PROVISIONER=ecs`)。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。ここで追加したワールドはWaterdogタスクが置き換わると失われる — このデプロイ先にはまだ再起動時の復元(reconcile)機構が無い(下のDocker側を参照)。
+- **`docker/`** — Docker Compose、もう1つのデプロイ先(`PROVISIONER=docker`)。単一の`waterdogpe`サービスのみで、Waterdogコンテナにホストのdockerソケットを直接マウントして新しいワールドコンテナを`docker run`できるようにしている — `lobby`もその一つで、専用のComposeサービスではなく、起動時に他のワールドと同じ経路でプロビジョニングされる。これは、WorldControl APIに到達できる者にホストのDockerデーモンの全権限を渡すことを意味する — DockerソケットにはIAMのような権限の絞り込みができないので、専用のプロビジョニングサービスを別途構築・運用しない代わりに、ECS版の最小権限IAMポリシーというメリットを手放すトレードオフ。`:8081`はloopback限定のままにしておくこと([`docker/docker-compose.yml`](docker/docker-compose.yml)参照。理由はECS版の専用制御セキュリティグループと同じ)。`POST /worlds`で追加したワールドは再起動を跨いで残る(コンテナデータは`docker/data/`配下、状態ファイルは`docker/data/state/`配下 — [永続化と復元(reconcile)](#永続化と復元reconcile)参照)。`docker/shared/`では、任意でlobbyを含む全ワールドに同じビヘイビアパック/configを配布できる — [共有ビヘイビアパックとconfig](#共有ビヘイビアパックとconfig)参照。
+- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。[`examples/worldControlCommands`](examples/worldControlCommands)は、`hakomc-world`を上記のgit URL経由で依存として持つ、独立したhakomcプロジェクト(それ自体`docker compose up`できるdevサーバー)で、ゲーム内スラッシュコマンド(`/hakomc:worldadd`/`worldstop`/`worldremove`/`worldlist`)に繋いでいる。
 
 ### 使い方
 
@@ -230,8 +299,9 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 **直接叩く**(そのVPCにネットワーク到達できる場所から):
 
 ```bash
-curl -X POST http://<waterdogのIP>:8081/worlds -d "name=survival2&gamemode=survival"
+curl -X POST http://<waterdogのIP>:8081/worlds -d "name=survival2&gamemode=survival&worldType=normal"
 curl http://<waterdogのIP>:8081/worlds
+curl -X POST http://<waterdogのIP>:8081/worlds/survival2/stop
 curl -X DELETE http://<waterdogのIP>:8081/worlds/survival2
 ```
 
@@ -242,14 +312,23 @@ npm install git+https://github.com/gollilla/MultiWorldBDS.git
 ```
 
 ```ts
-import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds } from 'hakomc-world';
 
-await addWorld('survival2', 'survival');
+await addWorld('survival2', 'survival', 'normal');
 console.log(await listWorlds());
-await removeWorld('survival2');
+await stopWorld('survival2');   // 一時停止。データは残るので、後でaddWorldすれば再開する
+await removeWorld('survival2'); // 停止した上でデータも完全に消す
 ```
 
 これにより、あるワールドで動いているビヘイビアパックから*別の*ワールドを追加・削除できる(例: ハブワールドに「ワールド作成」コマンドを置く、など)。ベースURLはこのサーバーの`variables`設定から`worldControlApiUrl`として読み込まれる(`src/worldControl.ts`のコメント参照)。
+
+`POST /worlds`が受け取るパラメータ:
+
+- `name`(必須)
+- `gamemode`(省略可、デフォルト`survival`)
+- `worldType`(省略可、デフォルト`normal`): `normal`は通常の生成ワールド、`flat`はBDSのフラットプリセット、`void`は事前に用意した空のワールド — **Dockerデプロイ先限定**([デプロイ (Docker Compose)](#デプロイ-docker-compose)参照)。ECSデプロイ先に対して`void`を指定すると502で失敗する。
+
+`POST /worlds/{name}/stop`と`DELETE /worlds/{name}`の違い: どちらもWaterdogからワールドを登録解除し、バックエンド(ECSタスク/Dockerコンテナ)を停止するが、データを消すのは`DELETE`だけ。`stop`済みの名前に対して`POST /worlds`をもう一度呼ぶと、新規生成ではなく既存のワールドデータを使って再開する(そのため`worldType`はその名前が初めて作られる時にしか効かない)。
 
 ### ビルド
 
@@ -303,8 +382,22 @@ cd docker
 docker compose up -d --build
 ```
 
-このホストのUDP 19132に接続する。`lobby`がデフォルトワールド。追加・削除は[使い方](#使い方)と同じ要領で、`http://127.0.0.1:8081`に対して行う。
+このホストのUDP 19132に接続する。`lobby`も起動時に他のワールドと同じ要領で自動プロビジョニングされる。追加・削除は[使い方](#使い方)と同じ要領で、`http://127.0.0.1:8081`に対して行う。
 
 ```bash
 docker compose down   # docker/data/配下のワールドデータは残る
 ```
+
+#### 永続化と復元(reconcile)
+
+`POST /worlds`でプロビジョニングしたワールド(`lobby`含む)は、`docker/data/state/`配下の小さな状態ファイルに記録される。起動時、`waterdogpe`はそこに記録されている全ワールドを既存のコンテナに対して再登録する(コンテナが生き残っていれば`docker start`、ホスト再起動などでコンテナ自体が失われていればデータボリュームを再利用しつつ`docker run`し直す)。`docker/docker-compose.yml`(または環境変数)で`RECONCILE=false`を設定すると、これをスキップして、以前追加したワールドは再度`POST /worlds`を呼ぶまで停止したままになる。`lobby`はこの設定に関わらず常に起動する。
+
+#### 共有ビヘイビアパックとconfig
+
+`docker/shared/`は、任意でこのデプロイ先が起動する全ワールド(`lobby`含む)にマウントされる:
+
+- `docker/shared/behavior_packs/<pack名>/` — パックごとに1つのサブディレクトリを置くと、各ワールドの`/data/behavior_packs/<pack名>`に読み取り専用でマウントされる。`behavior_packs`ディレクトリ全体を1つのマウントにしない理由: そうするとBDSがクラッシュする(BDS自身の初回起動時のvanillaパック展開処理が、同じディレクトリが別ファイルシステムのマウント点になっていると失敗するため)。
+- `docker/shared/world_behavior_packs.json` — 手動管理(このプラグインにはJSONパース処理が一切無いため)。各ワールド自身の`world_behavior_packs.json`として読み取り専用でバインドマウントされ、これによって上記のパックが実際に有効化される。
+- `docker/shared/config/` — 各ワールドの`/data/config`に読み書き可能でマウントされる(例: `config/default/permissions.json`)。
+
+`docker/docker-compose.yml`で`DOCKER_SHARED_DIR`を未設定のままにすれば、これらは全てスキップされる。`docker/world-templates/void/`はこれとは無関係の別のマウントで、`worldType=void`のワールドが初めて作られる時に`docker cp`で配置される、事前に用意した空のワールドが1つ入っている(BDSにはvoidワールドを生成する標準機能が無いため)。voidワールドの初期状態を変えたい場合は、この中身を差し替えればよい。
