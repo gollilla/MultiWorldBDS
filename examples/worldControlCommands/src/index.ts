@@ -15,7 +15,8 @@ import {
   CommandPermissionLevel,
 } from '@minecraft/server';
 import type { CustomCommand, CustomCommandOrigin, Player, StartupEvent } from '@minecraft/server';
-import { addWorld, removeWorld, listWorlds } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds } from 'hakomc-world';
+import type { WorldType } from 'hakomc-world';
 
 function reply(origin: CustomCommandOrigin, message: string): void {
   const source = origin.sourceEntity;
@@ -33,22 +34,41 @@ system.beforeEvents.startup.subscribe((init: StartupEvent) => {
 
   const worldAdd: CustomCommand = {
     name: 'hakomc:worldadd',
-    description: `Provisions a new world and registers it with Waterdog - doesn't move you there, run /server <name> once it's up`,
+    description: `Provisions a new world (or resumes a stopped one) and registers it with Waterdog - doesn't move you there, run /server <name> once it's up`,
     permissionLevel: CommandPermissionLevel.GameDirectors,
     mandatoryParameters: [{ type: CustomCommandParamType.String, name: 'name' }],
-    optionalParameters: [{ type: CustomCommandParamType.String, name: 'gamemode' }],
+    optionalParameters: [
+      { type: CustomCommandParamType.String, name: 'gamemode' },
+      { type: CustomCommandParamType.String, name: 'worldType' },
+    ],
   };
-  registry.registerCommand(worldAdd, (origin: CustomCommandOrigin, name: string, gamemode?: string) => {
-    reply(origin, `Provisioning '${name}'... this can take a while (container start + health check).`);
-    addWorld(name, gamemode ?? 'survival')
-      .then(() => reply(origin, `'${name}' is up - run /server ${name} to join it.`))
-      .catch((error: unknown) => reply(origin, `Failed to add '${name}': ${error}`));
+  registry.registerCommand(
+    worldAdd,
+    (origin: CustomCommandOrigin, name: string, gamemode?: string, worldType?: string) => {
+      reply(origin, `Provisioning '${name}'... this can take a while (container start + health check).`);
+      addWorld(name, gamemode ?? 'survival', (worldType as WorldType | undefined) ?? 'normal')
+        .then(() => reply(origin, `'${name}' is up - run /server ${name} to join it.`))
+        .catch((error: unknown) => reply(origin, `Failed to add '${name}': ${error}`));
+      return { status: CustomCommandStatus.Success };
+    }
+  );
+
+  const worldStop: CustomCommand = {
+    name: 'hakomc:worldstop',
+    description: `Stops a world and unregisters it from Waterdog, keeping its data so 'worldadd' can resume it later`,
+    permissionLevel: CommandPermissionLevel.GameDirectors,
+    mandatoryParameters: [{ type: CustomCommandParamType.String, name: 'name' }],
+  };
+  registry.registerCommand(worldStop, (origin: CustomCommandOrigin, name: string) => {
+    stopWorld(name)
+      .then(() => reply(origin, `'${name}' stopped.`))
+      .catch((error: unknown) => reply(origin, `Failed to stop '${name}': ${error}`));
     return { status: CustomCommandStatus.Success };
   });
 
   const worldRemove: CustomCommand = {
     name: 'hakomc:worldremove',
-    description: 'Stops a world and unregisters it from Waterdog',
+    description: 'Stops a world, unregisters it from Waterdog, and permanently erases its data',
     permissionLevel: CommandPermissionLevel.GameDirectors,
     mandatoryParameters: [{ type: CustomCommandParamType.String, name: 'name' }],
   };

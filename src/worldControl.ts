@@ -64,20 +64,42 @@ export async function listWorlds(): Promise<WorldSummary[]> {
   return response.json() as WorldSummary[];
 }
 
+/** normal: a regular generated world. flat: BDS's flat preset. void: a pre-built empty world (Docker target only - see WorldControl's README). */
+export type WorldType = 'normal' | 'flat' | 'void';
+
 /**
- * POST /worlds - provisions a new BDS world as an ECS task and registers it
+ * POST /worlds - provisions a world's backend (an ECS task or a Docker
+ * container, depending on how WorldControl is deployed) and registers it
  * with Waterdog. Resolves once the world is reachable through the proxy;
- * this can take up to a few minutes (ECS task start + health check).
+ * this can take up to a few minutes (task/container start + health check).
+ * Calling this again for a world that was previously stopWorld()'d resumes
+ * it against its existing data instead of creating a new one.
  */
-export async function addWorld(name: string, gamemode: string = 'survival'): Promise<void> {
+export async function addWorld(
+  name: string,
+  gamemode: string = 'survival',
+  worldType: WorldType = 'normal'
+): Promise<void> {
   await request(
     'POST',
     '/worlds',
-    `name=${encodeURIComponent(name)}&gamemode=${encodeURIComponent(gamemode)}`
+    `name=${encodeURIComponent(name)}&gamemode=${encodeURIComponent(gamemode)}&worldType=${encodeURIComponent(worldType)}`
   );
 }
 
-/** DELETE /worlds/{name} - unregisters and stops the given world's task. */
+/**
+ * POST /worlds/{name}/stop - stops the given world's backend and
+ * unregisters it from Waterdog, leaving its data alone so a later addWorld()
+ * with the same name resumes it.
+ */
+export async function stopWorld(name: string): Promise<void> {
+  await request('POST', `/worlds/${encodeURIComponent(name)}/stop`);
+}
+
+/**
+ * DELETE /worlds/{name} - stops the given world's backend, unregisters it
+ * from Waterdog, and permanently erases its data.
+ */
 export async function removeWorld(name: string): Promise<void> {
   await request('DELETE', `/worlds/${encodeURIComponent(name)}`);
 }

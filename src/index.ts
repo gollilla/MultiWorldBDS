@@ -1,2 +1,2 @@
-export { listWorlds, addWorld, removeWorld } from './worldControl';
-export type { WorldSummary } from './worldControl';
+export { listWorlds, addWorld, stopWorld, removeWorld } from './worldControl';
+export type { WorldSummary, WorldType } from './worldControl';
