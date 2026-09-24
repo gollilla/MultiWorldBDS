@@ -6,6 +6,7 @@ import dev.waterdog.waterdogpe.ProxyServer;
 import dev.waterdog.waterdogpe.network.serverinfo.ServerInfo;
 import dev.waterdog.waterdogpe.network.serverinfo.ServerInfoType;
 import dev.waterdog.waterdogpe.plugin.Plugin;
+import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -30,6 +31,8 @@ import java.util.stream.Collectors;
  *   resumes it.
  * - DELETE /worlds/{name} - stops the backend, unregisters it, and
  *   permanently erases its data.
+ * - POST /players/{name}/transfer - transfers an already-connected
+ *   player to a world registered with Waterdog (form field: world).
  *
  * This has no authentication of its own, so it must never be reachable
  * from the BDS worlds' network/security group or the public internet -
@@ -63,6 +66,7 @@ public class WorldControlPlugin extends Plugin {
         try {
             this.httpServer = HttpServer.create(new InetSocketAddress("0.0.0.0", 8081), 0);
             this.httpServer.createContext("/worlds", this::handleWorlds);
+            this.httpServer.createContext("/players", this::handlePlayers);
             this.httpServer.setExecutor(Executors.newCachedThreadPool());
             this.httpServer.start();
             this.getLogger().info("WorldControl HTTP API listening on :8081");
@@ -245,6 +249,56 @@ public class WorldControlPlugin extends Plugin {
         } else {
             this.respond(exchange, 404, "no such world");
         }
+    }
+
+    private void handlePlayers(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getPath();
+        String method = exchange.getRequestMethod();
+
+        try {
+            if (path.endsWith("/transfer") && "POST".equals(method)) {
+                // Player names can contain spaces/other characters a URL path can't hold
+                // literally, unlike world names - the client must percent-encode this
+                // segment (hakomc-world's transferPlayer() does), so it's decoded back here.
+                String name = URLDecoder.decode(
+                        path.substring("/players/".length(), path.length() - "/transfer".length()),
+                        StandardCharsets.UTF_8);
+                this.transferPlayer(exchange, name);
+                return;
+            }
+            this.respond(exchange, 405, "method not allowed");
+        } catch (Exception e) {
+            this.getLogger().error("Error handling WorldControl request", e);
+            this.respond(exchange, 500, "internal error: " + e.getMessage());
+        }
+    }
+
+    private void transferPlayer(HttpExchange exchange, String playerName) throws IOException {
+        if (playerName == null || playerName.isBlank()) {
+            this.respond(exchange, 400, "player name is required in the path");
+            return;
+        }
+        Map<String, String> form = parseForm(exchange.getRequestBody().readAllBytes());
+        String worldName = form.get("world");
+        if (worldName == null || worldName.isBlank()) {
+            this.respond(exchange, 400, "world is required");
+            return;
+        }
+
+        ProxiedPlayer player = this.getProxy().getPlayer(playerName);
+        if (player == null) {
+            this.respond(exchange, 404, "no such player");
+            return;
+        }
+        ServerInfo target = this.getProxy().getServerInfo(worldName);
+        if (target == null) {
+            this.respond(exchange, 404, "no such world");
+            return;
+        }
+
+        player.connect(target);
+        this.getLogger().info("Transferring player '" + playerName + "' to world '" + worldName + "'");
+        this.respond(exchange, 200, "transferring");
     }
 
     private static Map<String, String> parseForm(byte[] body) {

@@ -1,7 +1,8 @@
 /**
- * Exposes addWorld/removeWorld/listWorlds (from the hakomc-world package,
- * https://github.com/gollilla/MultiWorldBDS) as in-game slash commands, so
- * you can drive WorldControl straight from ScriptAPI instead of curl.
+ * Exposes addWorld/stopWorld/removeWorld/listWorlds/transferPlayer (from the
+ * hakomc-world package, https://github.com/gollilla/MultiWorldBDS) as
+ * in-game slash commands, so you can drive WorldControl straight from
+ * ScriptAPI instead of curl.
  *
  * Requires config/default/variables.json (or the itzg image's VARIABLES env
  * var, see docker-compose.yml) to set worldControlApiUrl to a reachable
@@ -15,7 +16,7 @@ import {
   CommandPermissionLevel,
 } from '@minecraft/server';
 import type { CustomCommand, CustomCommandOrigin, Player, StartupEvent } from '@minecraft/server';
-import { addWorld, stopWorld, removeWorld, listWorlds } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds, transferPlayer } from 'hakomc-world';
 import type { WorldType } from 'hakomc-world';
 
 function reply(origin: CustomCommandOrigin, message: string): void {
@@ -76,6 +77,26 @@ system.beforeEvents.startup.subscribe((init: StartupEvent) => {
     removeWorld(name)
       .then(() => reply(origin, `'${name}' removed.`))
       .catch((error: unknown) => reply(origin, `Failed to remove '${name}': ${error}`));
+    return { status: CustomCommandStatus.Success };
+  });
+
+  const worldTransfer: CustomCommand = {
+    name: 'hakomc:worldtransfer',
+    description: `Transfers a player to a world registered with Waterdog - defaults to yourself if no target is given`,
+    permissionLevel: CommandPermissionLevel.GameDirectors,
+    mandatoryParameters: [{ type: CustomCommandParamType.String, name: 'world' }],
+    optionalParameters: [{ type: CustomCommandParamType.PlayerSelector, name: 'target' }],
+  };
+  registry.registerCommand(worldTransfer, (origin: CustomCommandOrigin, world_: string, target?: Player) => {
+    const source = origin.sourceEntity;
+    const player = target ?? (source && 'sendMessage' in source ? (source as Player) : undefined);
+    if (!player) {
+      reply(origin, 'No target player to transfer.');
+      return { status: CustomCommandStatus.Success };
+    }
+    transferPlayer(player.name, world_)
+      .then(() => reply(origin, `Transferring '${player.name}' to '${world_}'.`))
+      .catch((error: unknown) => reply(origin, `Failed to transfer '${player.name}': ${error}`));
     return { status: CustomCommandStatus.Success };
   });
 

@@ -93,7 +93,7 @@ inside a *different* running world - see below).
   standalone hakomc project (its own `docker compose up`-able dev
   server) that depends on `hakomc-world` via the git URL above and
   wires it up to in-game slash commands
-  (`/hakomc:worldadd`/`worldstop`/`worldremove`/`worldlist`).
+  (`/hakomc:worldadd`/`worldstop`/`worldremove`/`worldlist`/`worldtransfer`).
 
 ### Usage
 
@@ -108,6 +108,7 @@ curl -X POST http://<waterdog-ip>:8081/worlds -d "name=survival2&gamemode=surviv
 curl http://<waterdog-ip>:8081/worlds
 curl -X POST http://<waterdog-ip>:8081/worlds/survival2/stop
 curl -X DELETE http://<waterdog-ip>:8081/worlds/survival2
+curl -X POST http://<waterdog-ip>:8081/players/Steve/transfer -d "world=survival2"
 ```
 
 **From a BDS-side script**, using this repo's `worldControl.ts`
@@ -119,10 +120,11 @@ npm install git+https://github.com/gollilla/MultiWorldBDS.git
 ```
 
 ```ts
-import { addWorld, stopWorld, removeWorld, listWorlds } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds, transferPlayer } from 'hakomc-world';
 
 await addWorld('survival2', 'survival', 'normal');
 console.log(await listWorlds());
+await transferPlayer('Steve', 'survival2'); // Steve must already be on this proxy
 await stopWorld('survival2');   // pauses it, data kept - addWorld resumes it later
 await removeWorld('survival2'); // stops it AND erases its data for good
 ```
@@ -148,6 +150,14 @@ container), but only `DELETE` erases its data. Calling `POST /worlds`
 again for a name that was `stop`'d resumes it against its existing
 world data instead of generating a new one (so `worldType` is only
 honored the first time a name is ever created).
+
+`POST /players/{name}/transfer` moves an already-connected player to a
+world registered with Waterdog (form field: `world`) - the same fast
+transfer the built-in `/server <name>` command triggers, just callable
+from outside the player's own session (e.g. a hub world's "join my
+friend" button, or a matchmaking script deciding where a player
+belongs). The player must already be connected to this Waterdog
+instance; 404 if either the player or the world isn't found.
 
 ### Building
 
@@ -290,7 +300,7 @@ BDS側からの呼び返しは一切無い。Bedrock Dedicated Serverバイナ�
 - **`waterdog/`** — WaterdogPEプロキシのイメージと、`PROVISIONER`環境変数(`ecs`または`docker`)に応じてAWS SDKまたは`docker` CLIでワールドをプロビジョニングする`WorldControl`プラグイン(Java/Gradle。[`waterdog/plugin/src`](waterdog/plugin/src)の`WorldProvisioner`/`EcsWorldProvisioner`/`DockerWorldProvisioner`を参照)。`waterdog/config.yml`はECSデプロイ先のプロキシ設定で、`lobby`を静的エントリとして持つ(そちらではWaterdog自身のタスクに同居している。[デプロイ (ECS Fargate)](#デプロイ-ecs-fargate)参照)。Docker Composeデプロイ先は別コピーの`docker/config.yml`を使い、静的サーバーは一切持たない — 下の`docker/`の項を参照。
 - **`infra/`** — AWS CDK(TypeScript)スタック、デプロイ先の1つ(`PROVISIONER=ecs`)。VPC(パブリックサブネットのみ、NAT Gateway無し — ロードバランサや複数インスタンスによる高可用性はスコープ外なので不要)、セキュリティグループ、ECSクラスター/タスク定義、そしてWorldControlのAWS操作権限をこのクラスターへの`RunTask`/`StopTask`/`DescribeTasks`と、BDSタスクの2つのロールへの`PassRole`だけに絞ったIAMポリシー。ここで追加したワールドはWaterdogタスクが置き換わると失われる — このデプロイ先にはまだ再起動時の復元(reconcile)機構が無い(下のDocker側を参照)。
 - **`docker/`** — Docker Compose、もう1つのデプロイ先(`PROVISIONER=docker`)。単一の`waterdogpe`サービスのみで、Waterdogコンテナにホストのdockerソケットを直接マウントして新しいワールドコンテナを`docker run`できるようにしている — `lobby`もその一つで、専用のComposeサービスではなく、起動時に他のワールドと同じ経路でプロビジョニングされる。これは、WorldControl APIに到達できる者にホストのDockerデーモンの全権限を渡すことを意味する — DockerソケットにはIAMのような権限の絞り込みができないので、専用のプロビジョニングサービスを別途構築・運用しない代わりに、ECS版の最小権限IAMポリシーというメリットを手放すトレードオフ。`:8081`はloopback限定のままにしておくこと([`docker/docker-compose.yml`](docker/docker-compose.yml)参照。理由はECS版の専用制御セキュリティグループと同じ)。`POST /worlds`で追加したワールドは再起動を跨いで残る(コンテナデータは`docker/data/`配下、状態ファイルは`docker/data/state/`配下 — [永続化と復元(reconcile)](#永続化と復元reconcile)参照)。`docker/shared/`では、任意でlobbyを含む全ワールドに同じビヘイビアパック/configを配布できる — [共有ビヘイビアパックとconfig](#共有ビヘイビアパックとconfig)参照。
-- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。[`examples/worldControlCommands`](examples/worldControlCommands)は、`hakomc-world`を上記のgit URL経由で依存として持つ、独立したhakomcプロジェクト(それ自体`docker compose up`できるdevサーバー)で、ゲーム内スラッシュコマンド(`/hakomc:worldadd`/`worldstop`/`worldremove`/`worldlist`)に繋いでいる。
+- **リポジトリのルート**(`package.json`、`src/`、`worlds/`など) — [hakomc](https://github.com/hakomc/hakomc)(Bedrock Scripting API)の開発環境。[hakomc-server](https://github.com/hakomc/hakomc-server)からブートストラップ。`src/worldControl.ts`はWorldControl APIの小さなクライアントで、*あるワールド*上で動いているビヘイビアパックから、`@minecraft/server-net`のHTTPクライアント(BDS側スクリプトから外部HTTP呼び出しを行う唯一の手段)経由で*別のワールド*を追加・削除できる。[`examples/worldControlCommands`](examples/worldControlCommands)は、`hakomc-world`を上記のgit URL経由で依存として持つ、独立したhakomcプロジェクト(それ自体`docker compose up`できるdevサーバー)で、ゲーム内スラッシュコマンド(`/hakomc:worldadd`/`worldstop`/`worldremove`/`worldlist`/`worldtransfer`)に繋いでいる。
 
 ### 使い方
 
@@ -303,6 +313,7 @@ curl -X POST http://<waterdogのIP>:8081/worlds -d "name=survival2&gamemode=surv
 curl http://<waterdogのIP>:8081/worlds
 curl -X POST http://<waterdogのIP>:8081/worlds/survival2/stop
 curl -X DELETE http://<waterdogのIP>:8081/worlds/survival2
+curl -X POST http://<waterdogのIP>:8081/players/Steve/transfer -d "world=survival2"
 ```
 
 **BDS側のスクリプトから**、このリポジトリの`worldControl.ts`(`hakomc-world`パッケージとしてバンドルされている)を使う場合。このリポジトリから直接インストールできる:
@@ -312,10 +323,11 @@ npm install git+https://github.com/gollilla/MultiWorldBDS.git
 ```
 
 ```ts
-import { addWorld, stopWorld, removeWorld, listWorlds } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds, transferPlayer } from 'hakomc-world';
 
 await addWorld('survival2', 'survival', 'normal');
 console.log(await listWorlds());
+await transferPlayer('Steve', 'survival2'); // Steveは事前にこのプロキシに接続済みである必要がある
 await stopWorld('survival2');   // 一時停止。データは残るので、後でaddWorldすれば再開する
 await removeWorld('survival2'); // 停止した上でデータも完全に消す
 ```
@@ -329,6 +341,8 @@ await removeWorld('survival2'); // 停止した上でデータも完全に消す
 - `worldType`(省略可、デフォルト`normal`): `normal`は通常の生成ワールド、`flat`はBDSのフラットプリセット、`void`は事前に用意した空のワールド — **Dockerデプロイ先限定**([デプロイ (Docker Compose)](#デプロイ-docker-compose)参照)。ECSデプロイ先に対して`void`を指定すると502で失敗する。
 
 `POST /worlds/{name}/stop`と`DELETE /worlds/{name}`の違い: どちらもWaterdogからワールドを登録解除し、バックエンド(ECSタスク/Dockerコンテナ)を停止するが、データを消すのは`DELETE`だけ。`stop`済みの名前に対して`POST /worlds`をもう一度呼ぶと、新規生成ではなく既存のワールドデータを使って再開する(そのため`worldType`はその名前が初めて作られる時にしか効かない)。
+
+`POST /players/{name}/transfer`は、すでに接続済みのプレイヤーをWaterdogに登録されているワールドへ移動させる(フォームフィールド: `world`)。標準の`/server <name>`コマンドと同じ高速転送を、プレイヤー自身のセッションの外側から呼べるようにしたもの(例: ハブワールドの「フレンドに合流」ボタンや、マッチメイキングスクリプトによる自動振り分け)。プレイヤーは事前にこのWaterdogインスタンスに接続済みである必要があり、プレイヤーまたはワールドのどちらかが見つからない場合は404になる。
 
 ### ビルド
 

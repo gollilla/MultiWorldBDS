@@ -103,3 +103,17 @@ export async function stopWorld(name: string): Promise<void> {
 export async function removeWorld(name: string): Promise<void> {
   await request('DELETE', `/worlds/${encodeURIComponent(name)}`);
 }
+
+/**
+ * POST /players/{name}/transfer - transfers an already-connected player to
+ * a world registered with Waterdog (fast transfer, no reconnect). The
+ * player must currently be on this same Waterdog proxy; there's no cross-
+ * proxy transfer here.
+ */
+export async function transferPlayer(playerName: string, worldName: string): Promise<void> {
+  await request(
+    'POST',
+    `/players/${encodeURIComponent(playerName)}/transfer`,
+    `world=${encodeURIComponent(worldName)}`
+  );
+}
