@@ -3,6 +3,7 @@ package dev.bdswaterdogpe.worldcontrol;
 import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Runs BDS worlds as local Docker containers (docker run), one per world.
@@ -265,6 +267,60 @@ public class DockerWorldProvisioner implements WorldProvisioner {
         run("docker", "run", "--rm", "--entrypoint", "sh",
                 "-v", this.dataDir + "/" + name + ":/target",
                 "itzg/minecraft-bedrock-server", "-c", "rm -rf /target/*");
+    }
+
+    /**
+     * Copies src's world data to dst's via a throwaway container - like
+     * purgeData, this container has no filesystem access to DOCKER_DATA_DIR
+     * itself. Bind-mounts the two worlds' own per-name subdirectory
+     * (worlds/<name>/, not the whole /data) directly at fixed in-container
+     * paths (/src, /dst) rather than interpolating src/dst into the shell
+     * script text - the names come from an HTTP request, and /src, /dst are
+     * fixed regardless of what they are, so there's nothing for a
+     * maliciously-crafted name to inject into.
+     */
+    @Override
+    public void copyWorld(String src, String dst, String gamemode, String worldType) {
+        try {
+            run("docker", "run", "--rm", "--entrypoint", "sh",
+                    "-v", this.dataDir + "/" + src + "/worlds/" + src + ":/src:ro",
+                    "-v", this.dataDir + "/" + dst + "/worlds/" + dst + ":/dst",
+                    "itzg/minecraft-bedrock-server", "-c", "rm -rf /dst/* && cp -r /src/. /dst/");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while copying world '" + src + "' to '" + dst + "'", e);
+        }
+        this.persist(dst, gamemode, worldType);
+    }
+
+    /**
+     * Matches by IP against every bds-* container currently running on
+     * this.network, not just ones WorldControlPlugin has already
+     * registered - a container has an IP as soon as it starts, well before
+     * its health check passes and it gets registered, which is when a
+     * world's own startup script is most likely to ask "who am I".
+     */
+    @Override
+    public Optional<String> resolveWorldName(InetAddress address) {
+        String target = address.getHostAddress();
+        try {
+            String names = run("docker", "ps", "--filter", "name=^/bds-", "--format", "{{.Names}}");
+            for (String container : names.split("\\R")) {
+                if (container.isBlank()) {
+                    continue;
+                }
+                String ip = run("docker", "inspect", "--format",
+                        "{{.NetworkSettings.Networks." + this.network + ".IPAddress}}", container).trim();
+                if (target.equals(ip)) {
+                    return Optional.of(container.substring("bds-".length()));
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            this.logger.warn("Failed to resolve world name for address " + target, e);
+        }
+        return Optional.empty();
     }
 
     @Override

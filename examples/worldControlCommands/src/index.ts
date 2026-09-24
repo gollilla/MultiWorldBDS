@@ -1,8 +1,8 @@
 /**
- * Exposes addWorld/stopWorld/removeWorld/listWorlds/transferPlayer (from the
- * hakomc-world package, https://github.com/gollilla/MultiWorldBDS) as
- * in-game slash commands, so you can drive WorldControl straight from
- * ScriptAPI instead of curl.
+ * Exposes addWorld/stopWorld/removeWorld/listWorlds/transferPlayer/
+ * getSelfWorldName/copyWorld (from the hakomc-world package,
+ * https://github.com/gollilla/MultiWorldBDS) as in-game slash commands, so
+ * you can drive WorldControl straight from ScriptAPI instead of curl.
  *
  * Requires config/default/variables.json (or the itzg image's VARIABLES env
  * var, see docker-compose.yml) to set worldControlApiUrl to a reachable
@@ -16,7 +16,7 @@ import {
   CommandPermissionLevel,
 } from '@minecraft/server';
 import type { CustomCommand, CustomCommandOrigin, Player, StartupEvent } from '@minecraft/server';
-import { addWorld, stopWorld, removeWorld, listWorlds, transferPlayer } from 'hakomc-world';
+import { addWorld, stopWorld, removeWorld, listWorlds, transferPlayer, getSelfWorldName, copyWorld } from 'hakomc-world';
 import type { WorldType } from 'hakomc-world';
 
 function reply(origin: CustomCommandOrigin, message: string): void {
@@ -97,6 +97,34 @@ system.beforeEvents.startup.subscribe((init: StartupEvent) => {
     transferPlayer(player.name, world_)
       .then(() => reply(origin, `Transferring '${player.name}' to '${world_}'.`))
       .catch((error: unknown) => reply(origin, `Failed to transfer '${player.name}': ${error}`));
+    return { status: CustomCommandStatus.Success };
+  });
+
+  const worldSelf: CustomCommand = {
+    name: 'hakomc:worldself',
+    description: `Asks WorldControl which world this script is currently running in`,
+    permissionLevel: CommandPermissionLevel.Any,
+  };
+  registry.registerCommand(worldSelf, (origin: CustomCommandOrigin) => {
+    getSelfWorldName()
+      .then((name) => reply(origin, `This is '${name}'.`))
+      .catch((error: unknown) => reply(origin, `Failed to resolve self: ${error}`));
+    return { status: CustomCommandStatus.Success };
+  });
+
+  const worldCopy: CustomCommand = {
+    name: 'hakomc:worldcopy',
+    description: `Copies a stopped world's data to a new (also not-running) name - doesn't start it, run 'worldadd' afterwards`,
+    permissionLevel: CommandPermissionLevel.GameDirectors,
+    mandatoryParameters: [
+      { type: CustomCommandParamType.String, name: 'src' },
+      { type: CustomCommandParamType.String, name: 'dst' },
+    ],
+  };
+  registry.registerCommand(worldCopy, (origin: CustomCommandOrigin, src: string, dst: string) => {
+    copyWorld(src, dst)
+      .then(() => reply(origin, `Copied '${src}' to '${dst}' - run '/hakomc:worldadd ${dst}' to start it.`))
+      .catch((error: unknown) => reply(origin, `Failed to copy '${src}' to '${dst}': ${error}`));
     return { status: CustomCommandStatus.Success };
   });
 

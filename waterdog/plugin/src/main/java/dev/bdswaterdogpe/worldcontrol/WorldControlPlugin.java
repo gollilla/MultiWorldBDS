@@ -10,6 +10,7 @@ import dev.waterdog.waterdogpe.player.ProxiedPlayer;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -17,7 +18,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
@@ -31,6 +34,12 @@ import java.util.stream.Collectors;
  *   resumes it.
  * - DELETE /worlds/{name} - stops the backend, unregisters it, and
  *   permanently erases its data.
+ * - GET /worlds/self - the name of the world whose backend is calling
+ *   this, resolved from the request's own source address. For a world's
+ *   own script to learn its own name (Script API has no other way to).
+ * - POST /worlds/{src}/copy - copies src's (stopped) world data to a new
+ *   name dst (form field: to, optionally gamemode/worldType to override
+ *   what's inherited from src), without starting it. Docker target only.
  * - POST /players/{name}/transfer - transfers an already-connected
  *   player to a world registered with Waterdog (form field: world).
  *
@@ -48,6 +57,15 @@ public class WorldControlPlugin extends Plugin {
 
     private HttpServer httpServer;
     private WorldProvisioner provisioner;
+    // Names currently mid-provisioning (between startWorld() being called and
+    // either registerServerInfo succeeding or the whole request failing).
+    // addWorld() claims a name here before touching the provisioner at all,
+    // so a second concurrent POST /worlds for the same name is rejected with
+    // 409 up front - without this, both requests could run startWorld()
+    // concurrently, and whichever loses the registerServerInfo race would
+    // destroyWorld() the name, potentially tearing down the OTHER request's
+    // just-provisioned backend instead of its own.
+    private final Set<String> provisioningWorlds = ConcurrentHashMap.newKeySet();
 
     @Override
     public void onEnable() {
@@ -90,12 +108,22 @@ public class WorldControlPlugin extends Plugin {
      * Runs off the startup thread since provisioning a world can block for
      * up to a few minutes (container start + health check). Set
      * RECONCILE=false to skip restoring previously added worlds - lobby
-     * still starts.
+     * still starts. lobby's gamemode/worldType default to survival/normal,
+     * overridable via LOBBY_GAMEMODE/LOBBY_WORLD_TYPE - e.g. a behavior pack
+     * that needs Script API modules only available under Beta APIs, which a
+     * freshly-generated (worldType=normal) world doesn't have enabled, so
+     * lobby needs to be worldType=void off a template that does.
      */
     private void bootstrapWorlds() {
         Map<String, WorldProvisioner.WorldRecord> worlds = new LinkedHashMap<>();
         if (this.provisioner instanceof DockerWorldProvisioner) {
-            worlds.put("lobby", new WorldProvisioner.WorldRecord("survival", "normal"));
+            String lobbyGamemode = System.getenv().getOrDefault("LOBBY_GAMEMODE", "survival");
+            String lobbyWorldType = System.getenv().getOrDefault("LOBBY_WORLD_TYPE", "normal").toLowerCase(Locale.ROOT);
+            if (!WORLD_TYPES.contains(lobbyWorldType)) {
+                this.getLogger().warn("Ignoring invalid LOBBY_WORLD_TYPE '" + lobbyWorldType + "'");
+                lobbyWorldType = "normal";
+            }
+            worlds.put("lobby", new WorldProvisioner.WorldRecord(lobbyGamemode, lobbyWorldType));
         }
         if (Boolean.parseBoolean(System.getenv().getOrDefault("RECONCILE", "true"))) {
             worlds.putAll(this.provisioner.knownWorlds());
@@ -148,9 +176,18 @@ public class WorldControlPlugin extends Plugin {
                 }
                 return;
             }
+            if (path.equals("/worlds/self") && "GET".equals(method)) {
+                this.getSelfWorld(exchange);
+                return;
+            }
             if (path.endsWith("/stop") && "POST".equals(method)) {
                 String name = path.substring("/worlds/".length(), path.length() - "/stop".length());
                 this.stopWorld(exchange, name);
+                return;
+            }
+            if (path.endsWith("/copy") && "POST".equals(method)) {
+                String name = path.substring("/worlds/".length(), path.length() - "/copy".length());
+                this.copyWorld(exchange, name);
                 return;
             }
             if ("DELETE".equals(method)) {
@@ -183,6 +220,10 @@ public class WorldControlPlugin extends Plugin {
             this.respond(exchange, 400, "name is required");
             return;
         }
+        if ("self".equals(name)) {
+            this.respond(exchange, 400, "'self' is a reserved name (see GET /worlds/self)");
+            return;
+        }
         if (!WORLD_TYPES.contains(worldType)) {
             this.respond(exchange, 400, "worldType must be one of: " + String.join(", ", WORLD_TYPES));
             return;
@@ -191,31 +232,39 @@ public class WorldControlPlugin extends Plugin {
             this.respond(exchange, 409, "a world with that name is already registered");
             return;
         }
-
-        InetSocketAddress address;
-        try {
-            address = this.provisioner.startWorld(name, gamemode, worldType);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            this.respond(exchange, 500, "interrupted while provisioning world");
-            return;
-        } catch (RuntimeException e) {
-            this.getLogger().error("Failed to provision world '" + name + "'", e);
-            this.provisioner.destroyWorld(name);
-            this.respond(exchange, 502, "failed to provision world: " + e.getMessage());
+        if (!this.provisioningWorlds.add(name)) {
+            this.respond(exchange, 409, "a world with that name is already being provisioned");
             return;
         }
 
-        ServerInfo serverInfo = ServerInfoType.RAKNET.getServerInfoFactory()
-                .createServerInfo(name, address, null);
-        boolean registered = this.getProxy().registerServerInfo(serverInfo);
-        if (registered) {
-            this.getLogger().info("Registered world '" + name + "' at " + address);
-            this.respond(exchange, 200, "registered");
-        } else {
-            // Lost a race with another registration of the same name; tear back down completely.
-            this.provisioner.destroyWorld(name);
-            this.respond(exchange, 409, "a world with that name is already registered");
+        try {
+            InetSocketAddress address;
+            try {
+                address = this.provisioner.startWorld(name, gamemode, worldType);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                this.respond(exchange, 500, "interrupted while provisioning world");
+                return;
+            } catch (RuntimeException e) {
+                this.getLogger().error("Failed to provision world '" + name + "'", e);
+                this.provisioner.destroyWorld(name);
+                this.respond(exchange, 502, "failed to provision world: " + e.getMessage());
+                return;
+            }
+
+            ServerInfo serverInfo = ServerInfoType.RAKNET.getServerInfoFactory()
+                    .createServerInfo(name, address, null);
+            boolean registered = this.getProxy().registerServerInfo(serverInfo);
+            if (registered) {
+                this.getLogger().info("Registered world '" + name + "' at " + address);
+                this.respond(exchange, 200, "registered");
+            } else {
+                // Lost a race with another registration of the same name; tear back down completely.
+                this.provisioner.destroyWorld(name);
+                this.respond(exchange, 409, "a world with that name is already registered");
+            }
+        } finally {
+            this.provisioningWorlds.remove(name);
         }
     }
 
@@ -249,6 +298,80 @@ public class WorldControlPlugin extends Plugin {
         } else {
             this.respond(exchange, 404, "no such world");
         }
+    }
+
+    /**
+     * Matches the request's own source address against every currently
+     * registered world first (works for any provisioner, since it's proxy-
+     * level data), then falls back to the provisioner's own best-effort
+     * lookup for a backend that's started but not yet healthy/registered
+     * (see WorldProvisioner#resolveWorldName - Docker only for now).
+     */
+    private void getSelfWorld(HttpExchange exchange) throws IOException {
+        InetAddress remote = exchange.getRemoteAddress().getAddress();
+
+        for (ServerInfo info : this.getProxy().getServers()) {
+            if (info.getAddress().getAddress().equals(remote)) {
+                this.respond(exchange, 200, "{\"name\":\"" + info.getServerName() + "\"}");
+                return;
+            }
+        }
+
+        Optional<String> starting = this.provisioner.resolveWorldName(remote);
+        if (starting.isPresent()) {
+            this.respond(exchange, 200, "{\"name\":\"" + starting.get() + "\"}");
+            return;
+        }
+
+        this.respond(exchange, 404, "no world registered for this address");
+    }
+
+    private void copyWorld(HttpExchange exchange, String src) throws IOException {
+        if (src == null || src.isBlank()) {
+            this.respond(exchange, 400, "world name is required in the path");
+            return;
+        }
+        Map<String, String> form = parseForm(exchange.getRequestBody().readAllBytes());
+        String dst = form.get("to");
+        if (dst == null || dst.isBlank()) {
+            this.respond(exchange, 400, "to is required");
+            return;
+        }
+        if (this.isBusy(src)) {
+            this.respond(exchange, 409, "'" + src + "' is registered or being provisioned");
+            return;
+        }
+        if (this.isBusy(dst)) {
+            this.respond(exchange, 409, "'" + dst + "' is registered or being provisioned");
+            return;
+        }
+
+        WorldProvisioner.WorldRecord srcRecord = this.provisioner.knownWorlds().get(src);
+        if (srcRecord == null) {
+            this.respond(exchange, 404, "no such world: " + src);
+            return;
+        }
+        String gamemode = form.getOrDefault("gamemode", srcRecord.gamemode());
+        String worldType = form.getOrDefault("worldType", srcRecord.worldType());
+
+        try {
+            this.provisioner.copyWorld(src, dst, gamemode, worldType);
+        } catch (UnsupportedOperationException e) {
+            this.respond(exchange, 501, "copy is not supported by this provisioner");
+            return;
+        } catch (RuntimeException e) {
+            this.getLogger().error("Failed to copy world '" + src + "' to '" + dst + "'", e);
+            this.respond(exchange, 502, "failed to copy world: " + e.getMessage());
+            return;
+        }
+
+        this.getLogger().info("Copied world '" + src + "' to '" + dst + "'");
+        this.respond(exchange, 200, "copied");
+    }
+
+    /** True if a name is registered with Waterdog or mid-provisioning - see addWorld's provisioningWorlds guard. */
+    private boolean isBusy(String name) {
+        return this.getProxy().getServerInfo(name) != null || this.provisioningWorlds.contains(name);
     }
 
     private void handlePlayers(HttpExchange exchange) throws IOException {

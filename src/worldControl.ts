@@ -117,3 +117,41 @@ export async function transferPlayer(playerName: string, worldName: string): Pro
     `world=${encodeURIComponent(worldName)}`
   );
 }
+
+/**
+ * GET /worlds/self - this world's own registered name, resolved by
+ * WorldControl from the request's own source address (Script API has no
+ * other way for a world to learn its own name - SERVER_NAME/LEVEL_NAME are
+ * only visible as env vars on the server process, not from a script). Can
+ * 404 in the brief window between a world's container starting and
+ * WorldControl's health check passing - retry rather than treating a single
+ * failure as fatal if you call this from a world's own startup code.
+ */
+export async function getSelfWorldName(): Promise<string> {
+  const response = await request('GET', '/worlds/self');
+  return (response.json() as { name: string }).name;
+}
+
+/**
+ * POST /worlds/{src}/copy - copies src's (stopped) world data to a new
+ * name, dst, without starting it - a later addWorld(dst) resumes the copy
+ * instead of generating a fresh world. Both src and dst must be neither
+ * registered nor mid-provisioning, or this fails with 409 (src should be
+ * stopWorld()'d first). gamemode/worldType default to whatever src was
+ * created with; pass them to override just the copy. Docker target only.
+ */
+export async function copyWorld(
+  src: string,
+  dst: string,
+  gamemode?: string,
+  worldType?: WorldType
+): Promise<void> {
+  let body = `to=${encodeURIComponent(dst)}`;
+  if (gamemode !== undefined) {
+    body += `&gamemode=${encodeURIComponent(gamemode)}`;
+  }
+  if (worldType !== undefined) {
+    body += `&worldType=${encodeURIComponent(worldType)}`;
+  }
+  await request('POST', `/worlds/${encodeURIComponent(src)}/copy`, body);
+}

@@ -1,7 +1,9 @@
 package dev.bdswaterdogpe.worldcontrol;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Provisions/tears down a world's backend on demand. Implementations:
@@ -51,5 +53,36 @@ public interface WorldProvisioner {
      */
     default Map<String, WorldRecord> knownWorlds() {
         return Map.of();
+    }
+
+    /**
+     * Copies a stopped world's data to a new name (gamemode/worldType for
+     * the copy, since the caller may want to override what src was created
+     * with) and records the new name in {@link #knownWorlds()} so a
+     * subsequent {@link #startWorld} resumes the copied data instead of
+     * treating it as brand new. Does not start dst's backend. The caller is
+     * responsible for checking that neither src nor dst is currently
+     * registered/running - this method doesn't re-check that itself.
+     * Providers with no durable per-world storage to copy (e.g.
+     * EcsWorldProvisioner) throw UnsupportedOperationException.
+     */
+    default void copyWorld(String src, String dst, String gamemode, String worldType) {
+        throw new UnsupportedOperationException("copyWorld is not supported by this provisioner");
+    }
+
+    /**
+     * Best-effort reverse lookup: the name of the world backend whose
+     * network address is this one, including a backend that's still
+     * starting up and not yet registered with Waterdog (a freshly created
+     * container has an IP before it's healthy) - see WorldControlPlugin's
+     * GET /worlds/self, which a world's own script can call to learn its
+     * own name (SERVER_NAME/LEVEL_NAME are only visible as env vars, not
+     * from Script API). Providers with no cheap way to do this (e.g.
+     * EcsWorldProvisioner, which would need a DescribeTasks call per
+     * lookup) return empty; WorldControlPlugin falls back to matching
+     * already-registered servers regardless of provisioner.
+     */
+    default Optional<String> resolveWorldName(InetAddress address) {
+        return Optional.empty();
     }
 }

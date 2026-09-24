@@ -22,6 +22,13 @@ services:
       # Docker-outside-of-Docker resolution) with behavior packs/config
       # shared by every world this provisions, lobby included. See ./shared.
       DOCKER_SHARED_DIR: ${PWD}/shared
+      # Optional: lobby's gamemode/worldType, default survival/normal - see
+      # WorldControlPlugin.bootstrapWorlds. Set LOBBY_WORLD_TYPE=void (with a
+      # matching ./world-templates/void, see below) if lobby's behavior pack
+      # needs Script API modules that require Beta APIs, which a freshly
+      # generated world doesn't have enabled.
+      LOBBY_GAMEMODE: ${LOBBY_GAMEMODE:-survival}
+      LOBBY_WORLD_TYPE: ${LOBBY_WORLD_TYPE:-normal}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config.yml:/waterdog/config.yml
